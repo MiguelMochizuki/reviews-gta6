@@ -2394,6 +2394,13 @@ dev = [
     { name = "pytest" },
     { name = "ruff" },
 ]
+nlp = [
+    { name = "gensim" },
+    { name = "lingua-language-detector" },
+    { name = "nltk" },
+    { name = "numpy" },
+    { name = "scipy" },
+]
 notebook = [
     { name = "gensim" },
     { name = "ipykernel" },
@@ -2421,6 +2428,13 @@ requires-dist = [
 dev = [
     { name = "pytest" },
     { name = "ruff" },
+]
+nlp = [
+    { name = "gensim" },
+    { name = "lingua-language-detector" },
+    { name = "nltk" },
+    { name = "numpy" },
+    { name = "scipy" },
 ]
 notebook = [
     { name = "gensim" },

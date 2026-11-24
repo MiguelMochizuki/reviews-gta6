@@ -71,3 +71,61 @@ def coverage(con: duckdb.DuckDBPyConnection) -> dict[str, Coverage]:
         window_start = datetime.fromtimestamp(max(starts) / 1000, tz=UTC)
         result[platform] = Coverage(window_start, window_start.date() + timedelta(days=1))
     return result
+
+
+def _band_counts() -> str:
+    return ", ".join(
+        f"count(*) FILTER (WHERE score BETWEEN {lo} AND {hi}) AS {name}"
+        for name, (lo, hi) in BANDS.items()
+    )
+
+
+def daily(con: duckdb.DuckDBPyConnection, now: datetime) -> dict[str, list[dict]]:
+    """Aggregate silver per platform and day.
+
+    Args:
+        con: Initialized silver connection.
+        now: Time of the run. Days after `valid_days(now)` are left out.
+
+    Returns:
+        dict[str, list[dict]]: Per platform, rows sorted by date with the keys `date`, `n`,
+            `mean`, `median`, `low`, `mid`, `high`, `repeated` (share of reviews whose
+            normalized text appears in two or more reviews; empty text never counts) and
+            `complete` (whether the day is at or after the platform's `complete_from`).
+    """
+    cover = coverage(con)
+    last_day = valid_days(now)
+    out: dict[str, list[dict]] = {}
+    for platform in PLATFORMS:
+        rows = con.execute(
+            f"""
+            WITH norm AS (
+                SELECT date, score,
+                       lower(trim(regexp_replace(text, '\\s+', ' ', 'g'))) AS key
+                FROM reviews WHERE platform = ? AND date <= ?
+            ), seen AS (
+                SELECT key, count(*) AS c FROM norm WHERE key <> '' GROUP BY key
+            )
+            SELECT norm.date, count(*), avg(norm.score), median(norm.score), {_band_counts()},
+                   avg(CASE WHEN seen.c >= 2 THEN 1.0 ELSE 0.0 END)
+            FROM norm LEFT JOIN seen USING (key)
+            GROUP BY norm.date ORDER BY norm.date
+            """,
+            [platform, last_day],
+        ).fetchall()
+        from_day = cover[platform].complete_from
+        out[platform] = [
+            {
+                "date": day.isoformat(),
+                "n": n,
+                "mean": round(mean, 2),
+                "median": median,
+                "low": low,
+                "mid": mid,
+                "high": high,
+                "repeated": round(repeated, 4),
+                "complete": from_day is not None and day >= from_day,
+            }
+            for day, n, mean, median, low, mid, high, repeated in rows
+        ]
+    return out

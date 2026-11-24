@@ -5,7 +5,7 @@ import tempfile
 from pathlib import Path
 
 STATE_FILES = ("reviews.parquet", "review_versions.parquet")
-_MISSING = ("release not found", "no assets match")
+_MISSING = ("release not found", "no assets match", "no assets to download")
 
 
 class GhReleaseStore:

@@ -174,3 +174,21 @@ def test_prepare_surfaces_a_release_creation_error():
     gh = FakeGh(releases=(), respond=lambda a: (1, "Repository is empty.") if a[2] == "create" else None)
     with pytest.raises(RuntimeError, match="empty"):
         GhReleaseStore(REPO, runner=gh).prepare()
+
+
+def real_gh_empty_release(argv):
+    """Real gh says this, not 'no assets match', for an existing release without assets."""
+    if argv[1:3] == ["release", "download"]:
+        return (1, "no assets to download")
+
+
+def test_pull_tolerates_an_existing_release_without_assets(tmp_path):
+    GhReleaseStore(REPO, runner=FakeGh(respond=real_gh_empty_release)).pull(tmp_path)
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_push_to_an_existing_release_without_assets_uploads_the_state(tmp_path):
+    gh = FakeGh(respond=real_gh_empty_release)
+    GhReleaseStore(REPO, runner=gh).push(make_src(tmp_path))
+    assert gh.assets["state"]["reviews.parquet"] == b"new-reviews"
+    assert "reviews.parquet.prev" not in gh.assets["state"]

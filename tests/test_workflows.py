@@ -39,3 +39,14 @@ def test_collect_workflow_reports_failure_in_one_issue():
     assert "if: failure()" in t
     assert "Collection run failed" in t
     assert "issues: write" in t
+
+
+def test_ci_runs_tools_without_resyncing_default_groups():
+    ci = (WORKFLOW.parent / "ci.yml").read_text()
+    for line in ci.splitlines():
+        if "uv run" in line:
+            assert "--no-sync" in line, line  # a bare `uv run` would install the notebook group
+
+
+def test_python_version_is_pinned():
+    assert (WORKFLOW.parents[2] / ".python-version").read_text().strip() == "3.12"

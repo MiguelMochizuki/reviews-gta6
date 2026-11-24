@@ -29,9 +29,20 @@ def run(
     salt: str,
     now: datetime,
 ) -> int:
-    """Pull state, sweep every platform and sentiment, check, save and push. Returns exit code.
+    """Pull state, sweep every platform and sentiment, check, save and push.
 
     Only counts and parameters are logged, never review text or author names.
+
+    Args:
+        mode: Sweep mode.
+        client: Client used for every request.
+        store: Where state is pulled from and pushed to.
+        workdir: Local directory for state and bronze files.
+        salt: Secret used to hash author names. Empty means refuse to run.
+        now: Observation time of the run.
+
+    Returns:
+        int: 0 on success, 1 on any failure.
     """
     if not salt:
         log.error("AUTHOR_SALT is not set; refusing to run")
@@ -78,6 +89,16 @@ def run(
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Run the collection from the command line.
+
+    Reads `STATE_REPO` and `AUTHOR_SALT` from the environment.
+
+    Args:
+        argv: Command-line arguments. Defaults to `sys.argv`.
+
+    Returns:
+        int: Exit code, 0 on success.
+    """
     parser = argparse.ArgumentParser(description="Collect Metacritic user reviews.")
     parser.add_argument("--mode", choices=["head", "deep"], required=True)
     parser.add_argument("--workdir", type=Path, default=Path("data/state"))

@@ -35,7 +35,15 @@ def _is_iso_date(value) -> bool:
 
 
 def check_raw_items(items: list[dict]) -> list[str]:
-    """Return one message per broken field; messages never include review text."""
+    """Check raw items against the data contract.
+
+    Args:
+        items: Raw items as returned by the endpoint.
+
+    Returns:
+        list[str]: One message per broken field, never including review text. Empty
+            when every item is valid.
+    """
     errors = []
     for index, item in enumerate(items):
         if not _is_uuid(item.get("id")):
@@ -52,6 +60,14 @@ def check_raw_items(items: list[dict]) -> list[str]:
 
 
 def check_silver(con: duckdb.DuckDBPyConnection) -> list[str]:
+    """Check silver for scores outside 0-10 and unknown platforms.
+
+    Args:
+        con: Initialized connection.
+
+    Returns:
+        list[str]: One message per problem found. Empty when silver is valid.
+    """
     errors = []
     bad_scores = con.execute(
         "SELECT count(*) FROM reviews WHERE score IS NULL OR score NOT BETWEEN 0 AND 10"
@@ -76,7 +92,16 @@ def write_bronze(
     sort: str,
     path: Path,
 ) -> None:
-    """Write raw items, as returned, to one Parquet file. Private storage only."""
+    """Write raw items, as returned, to one Parquet file. Private storage only.
+
+    Args:
+        items: Raw items to store.
+        fetched_at: When the items were fetched.
+        platform: Platform of the query.
+        sentiment: Sentiment filter of the query.
+        sort: Sort order of the query.
+        path: Target Parquet file. Parent directories are created.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     con = duckdb.connect()
     con.execute(

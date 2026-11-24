@@ -16,12 +16,19 @@ _TABLES = ("reviews", "review_versions")
 
 @dataclass
 class UpsertStats:
+    """Outcome of one upsert."""
+
     inserted: int
     updated: int
     unchanged: int
 
 
 def init(con: duckdb.DuckDBPyConnection) -> None:
+    """Create the `reviews` and `review_versions` tables if they do not exist.
+
+    Args:
+        con: Connection to initialize.
+    """
     con.execute(
         """
         CREATE TABLE IF NOT EXISTS reviews (
@@ -43,6 +50,14 @@ def init(con: duckdb.DuckDBPyConnection) -> None:
 
 
 def count(con: duckdb.DuckDBPyConnection) -> int:
+    """Return the number of reviews in silver.
+
+    Args:
+        con: Initialized connection.
+
+    Returns:
+        int: Row count of `reviews`.
+    """
     return con.execute("SELECT count(*) FROM reviews").fetchone()[0]
 
 
@@ -51,7 +66,16 @@ def _naive_utc(moment: datetime) -> datetime:
 
 
 def upsert(con: duckdb.DuckDBPyConnection, rows: list[dict], seen_at: datetime) -> UpsertStats:
-    """Insert new reviews, record changed ones as new versions, touch unchanged ones."""
+    """Insert new reviews, record changed ones as new versions, touch unchanged ones.
+
+    Args:
+        con: Initialized connection.
+        rows: Normalized rows. Repeated ids in one batch keep the last row.
+        seen_at: Observation time. Aware datetimes are converted to naive UTC.
+
+    Returns:
+        UpsertStats: How many rows were inserted, updated and left unchanged.
+    """
     if not rows:
         return UpsertStats(0, 0, 0)
     rows = list({(r["source"], r["source_review_id"]): r for r in rows}.values())
@@ -111,7 +135,15 @@ def upsert(con: duckdb.DuckDBPyConnection, rows: list[dict], seen_at: datetime) 
 
 
 def is_known(con: duckdb.DuckDBPyConnection, rows: list[dict]) -> bool:
-    """True when every row's (id, version, content) is already stored."""
+    """Check whether every row's id, version and content are already stored.
+
+    Args:
+        con: Initialized connection.
+        rows: Normalized rows to look up.
+
+    Returns:
+        bool: True when all rows are known. False for an empty list.
+    """
     if not rows:
         return False
     placeholders = ",".join(["(?, ?, ?, ?)"] * len(rows))
@@ -128,12 +160,24 @@ def is_known(con: duckdb.DuckDBPyConnection, rows: list[dict]) -> bool:
 
 
 def save(con: duckdb.DuckDBPyConnection, directory: Path) -> None:
+    """Export both tables to Parquet files in a directory.
+
+    Args:
+        con: Initialized connection.
+        directory: Target directory, created if missing.
+    """
     directory.mkdir(parents=True, exist_ok=True)
     for table in _TABLES:
         con.execute(f"COPY {table} TO '{directory / (table + '.parquet')}' (FORMAT PARQUET)")
 
 
 def load(con: duckdb.DuckDBPyConnection, directory: Path) -> None:
+    """Create the tables and fill them from Parquet files, when present.
+
+    Args:
+        con: Connection to load into.
+        directory: Directory with the Parquet files. A missing directory gives empty tables.
+    """
     init(con)
     for table in _TABLES:
         path = directory / f"{table}.parquet"

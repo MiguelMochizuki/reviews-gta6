@@ -8,7 +8,7 @@ Use [Conventional Commits](https://www.conventionalcommits.org/) in English, for
 
 ### Python
 
-Functions defined in notebook cells use Google-style docstrings. The notebooks have no type hints, so the docstring states each type as `name (type): meaning`.
+Functions in `src/` and in notebook cells use Google-style docstrings. Notebook functions have no type hints, so their docstrings state each type as `name (type): meaning`. In `src/` the type hints carry the types, so `Args` entries are just `name: meaning`.
 
 ```python
 def detect_lang(text):

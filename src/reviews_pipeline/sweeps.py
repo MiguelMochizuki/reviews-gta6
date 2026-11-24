@@ -19,6 +19,8 @@ class EmptyRunError(Exception):
 
 @dataclass
 class RunStats:
+    """Counts collected by one or more sweeps."""
+
     fetched: int
     inserted: int
     updated: int
@@ -50,6 +52,23 @@ def sweep(
 
     A head sweep stops after the first page whose reviews are all already stored; a deep
     sweep walks to the end. Whatever was collected before an error stays in silver and bronze.
+
+    Args:
+        client: Client used for every request.
+        con: Initialized silver connection.
+        platform: One of `config.PLATFORMS`.
+        sentiment: `positive`, `neutral` or `negative`.
+        mode: When to stop walking pages.
+        salt: Secret used to hash author names.
+        seen_at: Observation time, also used in the bronze file name.
+        bronze_dir: Directory for the bronze Parquet file.
+
+    Returns:
+        RunStats: Counts of fetched items, inserted, updated and unchanged reviews, and pages.
+
+    Raises:
+        ContractError: If a page breaks the raw data contract.
+        CircuitOpen: If the server keeps failing; earlier pages stay stored.
     """
     stats = RunStats(0, 0, 0, 0, 0)
     fetched_items: list[dict] = []
@@ -82,5 +101,14 @@ def sweep(
 
 
 def check_volume(stats: RunStats, previous_count: int) -> None:
+    """Fail loudly when a run fetched nothing although silver already has reviews.
+
+    Args:
+        stats: Totals of the run.
+        previous_count: Reviews in silver before the run.
+
+    Raises:
+        EmptyRunError: If `stats.fetched` is 0 and `previous_count` is above 0.
+    """
     if stats.fetched == 0 and previous_count > 0:
         raise EmptyRunError("run fetched no reviews although silver already has some")

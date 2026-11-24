@@ -9,6 +9,8 @@ _MISSING = ("release not found", "no assets match")
 
 
 class GhReleaseStore:
+    """Pipeline state stored as assets of a release in a private GitHub repository."""
+
     def __init__(self, repo: str, tag: str = "state", runner=subprocess.run):
         self.repo = repo
         self.tag = tag
@@ -31,6 +33,14 @@ class GhReleaseStore:
         )
 
     def pull(self, dest: Path) -> None:
+        """Download the state files from the release. A missing release gives an empty directory.
+
+        Args:
+            dest: Directory to download into, created if missing.
+
+        Raises:
+            RuntimeError: If `gh` fails for any reason other than a missing release or asset.
+        """
         dest.mkdir(parents=True, exist_ok=True)
         self._download(dest)
 
@@ -39,6 +49,15 @@ class GhReleaseStore:
         self._gh("release", "upload", self.tag, str(path), "-R", self.repo, *extra)
 
     def push(self, src: Path) -> None:
+        """Upload state files (keeping the previous copy as `.prev`) and new bronze files.
+
+        Args:
+            src: Directory with the state Parquet files at its root and bronze
+                files under `bronze/`.
+
+        Raises:
+            RuntimeError: If any `gh` command fails.
+        """
         if not self._gh("release", "view", self.tag, "-R", self.repo, allow_missing=True):
             self._gh("release", "create", self.tag, "-R", self.repo,
                      "--title", self.tag, "--notes", "pipeline state")

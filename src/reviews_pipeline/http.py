@@ -12,6 +12,8 @@ class CircuitOpen(Exception):
 
 
 class PoliteClient:
+    """HTTP client that paces requests, retries 429/5xx and identifies itself honestly."""
+
     def __init__(
         self,
         transport: httpx.BaseTransport | None = None,
@@ -37,6 +39,19 @@ class PoliteClient:
         self._last = self._clock()
 
     def get_json(self, url: str, params: dict) -> dict:
+        """Fetch a URL and return its JSON body.
+
+        Args:
+            url: Endpoint to request.
+            params: Query parameters.
+
+        Returns:
+            dict: Parsed JSON response.
+
+        Raises:
+            CircuitOpen: If the server still answers 429/5xx after all retries.
+            httpx.HTTPStatusError: For any other 4xx response (not retried).
+        """
         for attempt in range(self._max_retries + 1):
             self._pace()
             response = self._client.get(url, params=params)

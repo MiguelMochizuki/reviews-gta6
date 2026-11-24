@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GTA VI reception tracker</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <h1>GTA VI reception tracker</h1>
+    <p class="lede">Metacritic user reviews of GTA VI, collected every hour. This page shows aggregates only: no review text, no author names.</p>
+  </header>
+
+  <section id="fresh" class="panel" aria-live="polite">
+    <p id="fresh-status">Loading…</p>
+    <p id="fresh-detail" class="muted"></p>
+  </section>
+
+  <div class="filters">
+    <label for="platform">Platform</label>
+    <select id="platform">
+      <option value="playstation-5">PlayStation 5</option>
+      <option value="xbox-series-x">Xbox Series X</option>
+    </select>
+  </div>
+
+  <p id="empty" class="panel" hidden>No reviews collected for this platform yet.</p>
+  <p id="drift" class="note" hidden></p>
+  <p id="coverage" class="note" hidden></p>
+
+  <main id="charts">
+    <figure>
+      <figcaption><h2>Reviews per day</h2><span class="muted">Lighter columns are partial days.</span></figcaption>
+      <div class="chart"><canvas id="c-daily" role="img" aria-label="Reviews per day"></canvas></div>
+    </figure>
+    <figure>
+      <figcaption><h2>Score mix per day</h2><span class="muted">Share of reviews scored 0–1, 2–8 and 9–10, for days with at least 30 reviews.</span></figcaption>
+      <div class="chart"><canvas id="c-bands" role="img" aria-label="Score mix per day"></canvas></div>
+    </figure>
+    <figure>
+      <figcaption><h2>Reviews per hour</h2><span class="muted">UTC, hour of the last edit; complete hours only.</span></figcaption>
+      <div class="chart"><canvas id="c-hourly" role="img" aria-label="Reviews per hour"></canvas></div>
+    </figure>
+    <figure>
+      <figcaption><h2>Repeated texts</h2><span class="muted">Share of reviews whose text appears in two or more reviews, a review-bombing signal.</span></figcaption>
+      <div class="chart"><canvas id="c-repeat" role="img" aria-label="Share of repeated texts per day"></canvas></div>
+    </figure>
+
+    <details>
+      <summary>Table view</summary>
+      <div class="table-wrap"><table id="table"></table></div>
+    </details>
+  </main>
+
+  <footer>
+    <p>Source: Metacritic user reviews, collected from the public endpoint the website uses, politely (one request every 3 seconds). Each query reaches at most the 10,000 newest reviews, so busy platforms are only complete from the day shown in the partial-days note. Rows dated in the future are excluded: <span id="excluded">0</span>.</p>
+    <p>Code: <a href="https://github.com/MiguelMochizuki/reviews-gta6">reviews-gta6</a>. Chart.js is MIT licensed (<a href="vendor/CHART_LICENSE.txt">license</a>).</p>
+  </footer>
+
+  <script src="vendor/chart.umd.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

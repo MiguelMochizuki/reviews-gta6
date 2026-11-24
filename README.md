@@ -158,6 +158,8 @@ export STATE_REPO=owner/name AUTHOR_SALT=some-secret
 uv run python -m reviews_pipeline.run --mode head
 ```
 
+Platforms live in one registry, `PLATFORM_LABELS` in `src/reviews_pipeline/config.py` (slug used in the endpoint URL, name shown on the site). To collect another platform, such as PC when the game ships there, confirm its slug in the Metacritic page URL and add one line; collection, the gold files, the site's selector and the "All platforms" totals pick it up. A platform that only shows up in the data is still aggregated, with a label derived from its slug.
+
 A head sweep walks the newest reviews of each platform and sentiment until it reaches a page it already stores. A deep sweep walks every page up to the 10,000 cap and catches edits to older reviews. After a successful collection the workflow builds the gold files and deploys `site/` to GitHub Pages. Only aggregates are published; silver and bronze never leave the private release. The page says the data is stale when the last successful run is more than 3 hours old.
 
 Raw responses are written as one bronze file per run, uploaded to a monthly release (`bronze-YYYY-MM`) of the private repository to stay under the 1,000-assets-per-release limit. Author names are only hashed in silver.

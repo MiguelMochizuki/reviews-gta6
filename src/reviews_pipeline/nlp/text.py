@@ -79,17 +79,28 @@ def _wordnet_pos(tag: str) -> str:
     return {"J": wordnet.ADJ, "V": wordnet.VERB, "R": wordnet.ADV}.get(tag[:1], wordnet.NOUN)
 
 
-def _nltk_lemmatize(tokens: list[str]) -> list[str]:
+@cache
+def _nltk_tools():
+    """Download the nltk data once and build the tagger and lemmatizer once.
+
+    Rebuilding them per review made preprocessing about 40 ms a review, too slow to retrain
+    daily on a launch week's volume.
+    """
     import nltk
-    from nltk import pos_tag
-    from nltk.corpus import wordnet
     from nltk.stem import WordNetLemmatizer
+    from nltk.tag import PerceptronTagger
 
     for package in ("wordnet", "omw-1.4", "averaged_perceptron_tagger_eng"):
         nltk.download(package, quiet=True)
-    lemmatizer = WordNetLemmatizer()
+    return PerceptronTagger(), WordNetLemmatizer()
+
+
+def _nltk_lemmatize(tokens: list[str]) -> list[str]:
+    from nltk.corpus import wordnet
+
+    tagger, lemmatizer = _nltk_tools()
     lemmas = []
-    for word, tag in pos_tag(tokens):
+    for word, tag in tagger.tag(tokens):
         if word in _PROTECTED_WORDS:
             lemmas.append(word)
             continue

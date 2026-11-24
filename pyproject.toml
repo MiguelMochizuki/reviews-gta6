@@ -1,0 +1,13 @@
+[project]
+name = "reviews-gta6"
+version = "0.1.0"
+description = "EDA and topic modeling of GTA 6 user reviews"
+requires-python = ">=3.12"
+dependencies = [
+    "pandas", "numpy", "scipy", "matplotlib", "seaborn", "scikit-learn",
+    "nltk", "gensim", "pyldavis", "lingua-language-detector", "tqdm",
+    "jupyterlab", "ipykernel",
+]
+
+[tool.uv]
+package = false

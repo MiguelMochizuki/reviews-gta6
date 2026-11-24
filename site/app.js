@@ -222,7 +222,7 @@ function renderNotes(platform, rows, meta) {
   note.hidden = !partial;
   if (!note.hidden) {
     note.textContent =
-      `Days before ${cover.complete_from} may be partial for this platform: each query returns at most the ` +
+      `Days before ${cover.complete_from} may be partial for this selection: each query returns at most the ` +
       "10,000 newest reviews, so older days can be undercounted and skewed. Those days are drawn lighter.";
   }
 }

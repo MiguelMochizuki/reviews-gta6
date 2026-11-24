@@ -14,6 +14,9 @@ from reviews_pipeline.config import PLATFORMS
 
 log = logging.getLogger("reviews_pipeline")
 
+ALL = "all"  # pseudo-platform: both platforms together
+VIEWS = (*PLATFORMS, ALL)
+
 # Score bands of the published aggregates. They match Metacritic's sentiment filters
 # only partly: its filters are 0-4 / 5-7 / 8-10, used below to find the collection window.
 BANDS = {"low": (0, 1), "mid": (2, 8), "high": (9, 10)}
@@ -65,7 +68,8 @@ def coverage(con: duckdb.DuckDBPyConnection) -> dict[str, Coverage]:
         con: Initialized silver connection.
 
     Returns:
-        dict[str, Coverage]: One entry per platform in `config.PLATFORMS`.
+        dict[str, Coverage]: One entry per platform in `config.PLATFORMS`, plus `all`, which
+            is complete only from the day every platform with reviews is complete.
     """
     result = {}
     for platform in PLATFORMS:
@@ -88,6 +92,11 @@ def coverage(con: duckdb.DuckDBPyConnection) -> dict[str, Coverage]:
         else:
             window_start = datetime.fromtimestamp(min(starts) / 1000, tz=UTC)
             result[platform] = Coverage(window_start, window_start.date())
+    known = [cover for cover in result.values() if cover.window_start is not None]
+    result[ALL] = (
+        Coverage(max(c.window_start for c in known), max(c.complete_from for c in known))
+        if known else Coverage(None, None)
+    )
     return result
 
 
@@ -99,14 +108,14 @@ def _band_counts() -> str:
 
 
 def daily(con: duckdb.DuckDBPyConnection, now: datetime) -> dict[str, list[dict]]:
-    """Aggregate silver per platform and day.
+    """Aggregate silver per platform and day, plus `all` for both platforms together.
 
     Args:
         con: Initialized silver connection.
         now: Time of the run. Days after `valid_days(now)` (today) are left out.
 
     Returns:
-        dict[str, list[dict]]: Per platform, rows sorted by date with the keys `date`, `n`,
+        dict[str, list[dict]]: Per platform and `all`, rows sorted by date with the keys `date`, `n`,
             `mean`, `median`, `low`, `mid`, `high`, `repeated` (share of reviews whose
             normalized text appears in two or more reviews on any platform; empty text never
             counts) and `complete` (the day is at or after the platform's `complete_from`
@@ -115,7 +124,7 @@ def daily(con: duckdb.DuckDBPyConnection, now: datetime) -> dict[str, list[dict]
     cover = coverage(con)
     last_day = valid_days(now)
     out: dict[str, list[dict]] = {}
-    for platform in PLATFORMS:
+    for platform in VIEWS:
         rows = con.execute(
             f"""
             WITH norm AS (
@@ -128,10 +137,10 @@ def daily(con: duckdb.DuckDBPyConnection, now: datetime) -> dict[str, list[dict]
             SELECT norm.date, count(*), avg(norm.score), median(norm.score), {_band_counts()},
                    avg(CASE WHEN seen.c >= 2 THEN 1.0 ELSE 0.0 END)
             FROM norm LEFT JOIN seen USING (key)
-            WHERE norm.platform = ?
+            WHERE (? = 'all' OR norm.platform = ?)
             GROUP BY norm.date ORDER BY norm.date
             """,
-            [last_day, platform],
+            [last_day, platform, platform],
         ).fetchall()
         from_day = cover[platform].complete_from
         out[platform] = [
@@ -163,13 +172,13 @@ def hourly(con: duckdb.DuckDBPyConnection, now: datetime) -> dict[str, list[dict
         now: Time of the run.
 
     Returns:
-        dict[str, list[dict]]: Per platform, rows `{"hour": "...Z", "n": int}` sorted by hour,
+        dict[str, list[dict]]: Per platform and `all`, rows `{"hour": "...Z", "n": int}` sorted by hour,
             from the first full hour at or after the platform's window start up to the hour
             before the latest collection started (an hour still being filled is left out).
     """
     (last_seen,) = con.execute("SELECT max(last_seen_at) FROM reviews").fetchone()
     if last_seen is None:
-        return {platform: [] for platform in PLATFORMS}
+        return {view: [] for view in VIEWS}
     # The collection that wrote silver started at `last_seen`: the hour it started in was
     # still being filled, so only hours before it are complete.
     cutoff = min(now, last_seen.replace(tzinfo=UTC)).replace(minute=0, second=0, microsecond=0)
@@ -185,9 +194,9 @@ def hourly(con: duckdb.DuckDBPyConnection, now: datetime) -> dict[str, list[dict
             first_ms += 3_600_000
         rows = con.execute(
             "SELECT version_ms // 3600000 * 3600000 AS hour_ms, count(*) FROM reviews "
-            "WHERE platform = ? AND version_ms >= ? AND version_ms < ? "
+            "WHERE (? = 'all' OR platform = ?) AND version_ms >= ? AND version_ms < ? "
             "GROUP BY hour_ms ORDER BY hour_ms",
-            [platform, first_ms, cutoff_ms],
+            [platform, platform, first_ms, cutoff_ms],
         ).fetchall()
         out[platform] = [
             {"hour": _iso(datetime.fromtimestamp(hour_ms / 1000, tz=UTC)), "n": n}
@@ -256,7 +265,7 @@ def meta(con: duckdb.DuckDBPyConnection, now: datetime) -> dict:
             }
             for platform, cover in coverage(con).items()
         },
-        "drift": {platform: _drift(days[platform], valid_days(now)) for platform in PLATFORMS},
+        "drift": {view: _drift(days[view], valid_days(now)) for view in VIEWS},
     }
 
 

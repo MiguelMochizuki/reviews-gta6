@@ -90,7 +90,8 @@ def test_daily_excludes_future_junk_dates():
 def test_daily_platform_without_rows_is_an_empty_list():
     out = gold.daily(seeded_silver(day_rows(PS5, "2026-11-23", [5])), NOW)
     assert out[XBOX] == []
-    assert set(out) == {PS5, XBOX}
+    assert set(out) == {PS5, XBOX, "all"}
+    assert out["all"] == out[PS5]
 
 
 def at(day, hour, platform=PS5, score=5, text=None):
@@ -139,7 +140,7 @@ def test_meta_on_empty_silver_has_nulls_and_zero_rows():
     meta = gold.meta(seeded_silver([]), NOW)
     assert meta["last_success_at"] is None and meta["newest_review_at"] is None
     assert (meta["rows"], meta["excluded_future_dates"]) == (0, 0)
-    assert meta["drift"] == {PS5: None, XBOX: None}
+    assert meta["drift"] == {PS5: None, XBOX: None, "all": None}
 
 
 def drift_rows(latest_low):
@@ -174,8 +175,8 @@ def test_drift_is_null_with_fewer_than_three_prior_days():
 def test_build_has_the_three_documents():
     out = gold.build(seeded_silver(day_rows(PS5, "2026-11-23", [5])), NOW)
     assert set(out) == {"meta", "daily", "hourly"}
-    assert set(out["daily"]["platforms"]) == {PS5, XBOX}
-    assert set(out["hourly"]["platforms"]) == {PS5, XBOX}
+    assert set(out["daily"]["platforms"]) == {PS5, XBOX, "all"}
+    assert set(out["hourly"]["platforms"]) == {PS5, XBOX, "all"}
 
 
 DAILY_KEYS = {"date", "n", "mean", "median", "low", "mid", "high", "repeated", "complete"}
@@ -201,7 +202,9 @@ def test_written_json_contains_no_review_level_data(tmp_path):
 
 def test_write_on_empty_silver_gives_valid_empty_files(tmp_path):
     gold.write(seeded_silver([]), tmp_path, NOW)
-    assert json.loads((tmp_path / "daily.json").read_text()) == {"platforms": {PS5: [], XBOX: []}}
+    assert json.loads((tmp_path / "daily.json").read_text()) == {
+        "platforms": {PS5: [], XBOX: [], "all": []}
+    }
     assert json.loads((tmp_path / "meta.json").read_text())["last_success_at"] is None
 
 
@@ -270,3 +273,43 @@ def test_drift_pools_the_prior_days_instead_of_averaging_shares():
     rows += day_rows(PS5, "2026-11-22", [0] * 50 + [5] * 50)            # latest, 50% low
     drift = gold.meta(seeded_silver(rows), NOW)["drift"][PS5]           # pooled prior share is 21.7%
     assert drift["metric"] == "low" and drift["delta_pp"] == pytest.approx(28.3, abs=0.1)
+
+
+def test_all_view_sums_both_platforms_for_a_day():
+    rows = day_rows(PS5, "2026-11-23", [9, 9]) + day_rows(XBOX, "2026-11-23", [1])
+    (row,) = gold.daily(seeded_silver(rows), NOW)["all"]
+    assert (row["n"], row["low"], row["high"]) == (3, 1, 2)
+    assert row["mean"] == round(19 / 3, 2) and row["median"] == 9
+
+
+def test_all_view_counts_a_text_repeated_across_platforms():
+    rows = day_rows(PS5, "2026-11-23", [5, 5], ["copy", "own PS5 text"]) + day_rows(XBOX, "2026-11-23", [5], ["copy"])
+    (row,) = gold.daily(seeded_silver(rows), NOW)["all"]
+    assert row["repeated"] == round(2 / 3, 4)
+
+
+def test_all_view_is_complete_only_when_every_platform_is():
+    rows = (
+        [(PS5, s, "2026-11-22", utc_ms(2026, 11, 22, 2), f"p{s}") for s in (9, 6, 2)]   # PS5 window starts the 22nd
+        + [(XBOX, s, "2026-11-20", utc_ms(2026, 11, 20, 2), f"x{s}") for s in (9, 6, 2)]  # Xbox from the 20th
+        + day_rows(XBOX, "2026-11-21", [5])
+    )
+    con = seeded_silver(rows)
+    cov = gold.coverage(con)
+    assert cov["all"].window_start == cov[PS5].window_start
+    assert cov["all"].complete_from == cov[PS5].complete_from == date(2026, 11, 23)
+    xbox_days = {r["date"]: r["complete"] for r in gold.daily(con, NOW)[XBOX]}
+    all_days = {r["date"]: r["complete"] for r in gold.daily(con, NOW)["all"]}
+    assert xbox_days["2026-11-21"] is True and all_days["2026-11-21"] is False
+
+
+def test_all_view_hourly_adds_the_platforms_together():
+    rows = [at("2026-11-23", 10, PS5, s) for s in (9, 6, 2)] + [at("2026-11-23", 10, XBOX, s) for s in (9, 6, 2)]
+    hours = gold.hourly(seeded_silver(rows), NOW)
+    assert hours["all"] == [{"hour": "2026-11-23T10:00:00Z", "n": 6}]
+
+
+def test_all_view_without_any_rows_is_empty():
+    con = seeded_silver([])
+    assert gold.daily(con, NOW)["all"] == [] and gold.hourly(con, NOW)["all"] == []
+    assert gold.coverage(con)["all"] == gold.Coverage(None, None)

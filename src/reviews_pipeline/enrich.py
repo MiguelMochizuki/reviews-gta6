@@ -53,14 +53,15 @@ def pending(con: duckdb.DuckDBPyConnection, model_version: int) -> list[tuple[st
 
     Returns:
         list[tuple[str, str]]: `(source, source_review_id)` of reviews with no row, a row for
-            other content, or a row from an older model.
+            other content, or a row from a different model version (a restored older state
+            can hold rows newer than the model).
     """
     return con.execute(
         """
         SELECT r.source, r.source_review_id FROM reviews r
         LEFT JOIN review_topics t USING (source, source_review_id)
         WHERE t.source IS NULL OR t.content_hash IS DISTINCT FROM r.content_hash
-           OR t.model_version < ?
+           OR t.model_version <> ?
         """,
         [model_version],
     ).fetchall()
@@ -96,7 +97,7 @@ def enrich_pending(
                CASE WHEN t.content_hash = r.content_hash THEN t.language END AS known_language
         FROM reviews r LEFT JOIN review_topics t USING (source, source_review_id)
         WHERE t.source IS NULL OR t.content_hash IS DISTINCT FROM r.content_hash
-           OR t.model_version < ?
+           OR t.model_version <> ?
         """,
         [version],
     )

@@ -192,3 +192,44 @@ def test_push_to_an_existing_release_without_assets_uploads_the_state(tmp_path):
     GhReleaseStore(REPO, runner=gh).push(make_src(tmp_path))
     assert gh.assets["state"]["reviews.parquet"] == b"new-reviews"
     assert "reviews.parquet.prev" not in gh.assets["state"]
+
+
+OPTIONAL = {"review_topics.parquet": b"topics", "topic_model.zip": b"model"}
+
+
+def test_pull_with_only_required_files_leaves_no_optional_file(tmp_path):
+    gh = FakeGh(assets={"reviews.parquet": b"r", "review_versions.parquet": b"v"})
+    GhReleaseStore(REPO, runner=gh).pull(tmp_path)
+    assert not (tmp_path / "review_topics.parquet").exists()
+    assert not (tmp_path / "topic_model.zip").exists()
+
+
+def test_pull_downloads_optional_files(tmp_path):
+    gh = FakeGh(assets={"reviews.parquet": b"r", "review_versions.parquet": b"v", **OPTIONAL})
+    GhReleaseStore(REPO, runner=gh).pull(tmp_path)
+    assert (tmp_path / "review_topics.parquet").read_bytes() == b"topics"
+    assert (tmp_path / "topic_model.zip").read_bytes() == b"model"
+    assert "topic_model.zip" in gh.calls[0] and "review_topics.parquet" in gh.calls[0]
+
+
+def test_pull_restores_a_missing_optional_file_from_prev(tmp_path):
+    gh = FakeGh(assets={"reviews.parquet": b"r", "review_versions.parquet": b"v",
+                        "topic_model.zip.prev": b"old-model"})
+    GhReleaseStore(REPO, runner=gh).pull(tmp_path)
+    assert (tmp_path / "topic_model.zip").read_bytes() == b"old-model"
+    assert not (tmp_path / "topic_model.zip.prev").exists()
+
+
+def test_optional_files_alone_do_not_make_required_state_incomplete(tmp_path):
+    GhReleaseStore(REPO, runner=FakeGh(assets=OPTIONAL)).pull(tmp_path)  # fresh start, no raise
+    assert not (tmp_path / "reviews.parquet").exists()
+
+
+def test_push_uploads_optional_files_keeping_the_previous_copy(tmp_path):
+    gh = FakeGh(assets={"topic_model.zip": b"old-model"})
+    src = make_src(tmp_path)
+    (src / "topic_model.zip").write_bytes(b"new-model")
+    GhReleaseStore(REPO, runner=gh).push(src)
+    assert gh.assets["state"]["topic_model.zip.prev"] == b"old-model"
+    assert gh.assets["state"]["topic_model.zip"] == b"new-model"
+    assert "review_topics.parquet" not in gh.assets["state"]  # absent locally, skipped

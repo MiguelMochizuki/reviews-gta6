@@ -1,8 +1,9 @@
+import json
 from datetime import UTC, date, datetime
 
 from helpers import seeded_silver, utc_ms
 
-from reviews_pipeline import gold
+from reviews_pipeline import gold, silver
 
 NOW = datetime(2026, 11, 24, 12, 0, tzinfo=UTC)
 PS5, XBOX = "playstation-5", "xbox-series-x"
@@ -29,8 +30,8 @@ def test_coverage_empty_silver_is_none():
     assert gold.coverage(con)[PS5] == gold.Coverage(None, None)
 
 
-def test_valid_days_allows_one_day_ahead():
-    assert gold.valid_days(NOW) == date(2026, 11, 25)
+def test_valid_days_stops_at_today():
+    assert gold.valid_days(NOW) == date(2026, 11, 24)
 
 
 def day_rows(platform, day, scores, texts=None):
@@ -71,12 +72,12 @@ def test_daily_marks_days_before_window_as_incomplete():
 def test_daily_excludes_future_junk_dates():
     rows = (
         day_rows(PS5, "2026-11-23", [5])
-        + day_rows(PS5, "2026-11-25", [5])   # one day ahead: kept
-        + day_rows(PS5, "2026-11-26", [5])   # two days ahead: junk
+        + day_rows(PS5, "2026-11-24", [5])   # today: kept
+        + day_rows(PS5, "2026-11-25", [5])   # tomorrow (time zone or junk): excluded
         + day_rows(PS5, "2027-11-21", [5])
     )
     days = [r["date"] for r in only(gold.daily(seeded_silver(rows), NOW))]
-    assert days == ["2026-11-23", "2026-11-25"]
+    assert days == ["2026-11-23", "2026-11-24"]
 
 
 def test_daily_platform_without_rows_is_an_empty_list():
@@ -148,6 +149,12 @@ def test_drift_flags_a_large_move_in_a_band_share():
     assert drift == {"date": "2026-11-22", "metric": "low", "delta_pp": 50.0}
 
 
+def test_drift_ignores_the_current_unfinished_day():
+    today = day_rows(PS5, "2026-11-24", [0] * 10)  # NOW is 2026-11-24 12:00: day not over
+    drift = gold.meta(seeded_silver(drift_rows(6) + today), NOW)["drift"][PS5]
+    assert drift == {"date": "2026-11-22", "metric": "low", "delta_pp": 50.0}
+
+
 def test_drift_ignores_a_move_within_the_threshold():
     assert gold.meta(seeded_silver(drift_rows(2)), NOW)["drift"][PS5] is None
 
@@ -162,3 +169,42 @@ def test_build_has_the_three_documents():
     assert set(out) == {"meta", "daily", "hourly"}
     assert set(out["daily"]["platforms"]) == {PS5, XBOX}
     assert set(out["hourly"]["platforms"]) == {PS5, XBOX}
+
+
+DAILY_KEYS = {"date", "n", "mean", "median", "low", "mid", "high", "repeated", "complete"}
+
+
+def test_write_creates_three_valid_json_files(tmp_path):
+    con = seeded_silver(day_rows(PS5, "2026-11-23", [5, 9]))
+    gold.write(con, tmp_path / "out", NOW)
+    for name in ("meta", "daily", "hourly"):
+        assert isinstance(json.loads((tmp_path / "out" / f"{name}.json").read_text()), dict)
+
+
+def test_written_json_contains_no_review_level_data(tmp_path):
+    rows = day_rows(PS5, "2026-11-23", [5, 9], ["SECRET-TEXT-one", "SECRET-TEXT-two"])
+    gold.write(seeded_silver(rows), tmp_path, NOW)
+    for path in tmp_path.glob("*.json"):
+        content = path.read_text()
+        for needle in ("SECRET-TEXT", "hash-", "id-0", "id-1"):
+            assert needle not in content, (path.name, needle)
+    daily_rows = json.loads((tmp_path / "daily.json").read_text())["platforms"][PS5]
+    assert {frozenset(row) for row in daily_rows} == {frozenset(DAILY_KEYS)}
+
+
+def test_write_on_empty_silver_gives_valid_empty_files(tmp_path):
+    gold.write(seeded_silver([]), tmp_path, NOW)
+    assert json.loads((tmp_path / "daily.json").read_text()) == {"platforms": {PS5: [], XBOX: []}}
+    assert json.loads((tmp_path / "meta.json").read_text())["last_success_at"] is None
+
+
+def test_main_exits_one_without_state_files(tmp_path):
+    assert gold.main(["--state", str(tmp_path), "--out", str(tmp_path / "out")]) == 1
+    assert not (tmp_path / "out").exists()
+
+
+def test_main_writes_files_from_saved_silver(tmp_path):
+    silver.save(seeded_silver(day_rows(PS5, "2026-11-23", [5, 9])), tmp_path / "state")
+    out = tmp_path / "out"
+    assert gold.main(["--state", str(tmp_path / "state"), "--out", str(out)]) == 0
+    assert (out / "daily.json").exists()

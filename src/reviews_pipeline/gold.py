@@ -1,11 +1,18 @@
 """Gold layer: daily and hourly aggregates of silver, with no review-level data."""
 
+import argparse
+import json
+import logging
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
+from pathlib import Path
 
 import duckdb
 
+from reviews_pipeline import silver
 from reviews_pipeline.config import PLATFORMS
+
+log = logging.getLogger("reviews_pipeline")
 
 # Score bands of the published aggregates. They match Metacritic's sentiment filters
 # only partly: its filters are 0-4 / 5-7 / 8-10, used below to find the collection window.
@@ -30,15 +37,16 @@ class Coverage:
 def valid_days(now: datetime) -> date:
     """Return the last `date` accepted in aggregates.
 
-    Metacritic dates a few reviews one day ahead (time zones) and a few years ahead (junk).
+    Metacritic dates a handful of reviews tomorrow or years ahead (junk, time zones); they
+    would show up as points in the future, so they are excluded and counted instead.
 
     Args:
         now: Time of the run.
 
     Returns:
-        date: The day after `now`, in UTC.
+        date: Today, in UTC.
     """
-    return now.astimezone(UTC).date() + timedelta(days=1)
+    return now.astimezone(UTC).date()
 
 
 def coverage(con: duckdb.DuckDBPyConnection) -> dict[str, Coverage]:
@@ -85,7 +93,7 @@ def daily(con: duckdb.DuckDBPyConnection, now: datetime) -> dict[str, list[dict]
 
     Args:
         con: Initialized silver connection.
-        now: Time of the run. Days after `valid_days(now)` are left out.
+        now: Time of the run. Days after `valid_days(now)` (today) are left out.
 
     Returns:
         dict[str, list[dict]]: Per platform, rows sorted by date with the keys `date`, `n`,
@@ -173,9 +181,9 @@ DRIFT_THRESHOLD_PP = 15.0
 DRIFT_MIN_PRIOR_DAYS = 3
 
 
-def _drift(days: list[dict]) -> dict | None:
-    """Compare the latest complete day's low/high score shares with the earlier days' mean."""
-    complete = [day for day in days if day["complete"]]
+def _drift(days: list[dict], today: date) -> dict | None:
+    """Compare the latest finished complete day's low/high shares with the earlier days' mean."""
+    complete = [day for day in days if day["complete"] and day["date"] < today.isoformat()]
     if len(complete) <= DRIFT_MIN_PRIOR_DAYS:
         return None
     *prior, latest = complete
@@ -225,7 +233,7 @@ def meta(con: duckdb.DuckDBPyConnection, now: datetime) -> dict:
             }
             for platform, cover in coverage(con).items()
         },
-        "drift": {platform: _drift(days[platform]) for platform in PLATFORMS},
+        "drift": {platform: _drift(days[platform], valid_days(now)) for platform in PLATFORMS},
     }
 
 
@@ -244,3 +252,48 @@ def build(con: duckdb.DuckDBPyConnection, now: datetime) -> dict[str, dict]:
         "daily": {"platforms": daily(con, now)},
         "hourly": {"platforms": hourly(con, now)},
     }
+
+
+def write(con: duckdb.DuckDBPyConnection, out_dir: Path, now: datetime) -> None:
+    """Write `meta.json`, `daily.json` and `hourly.json` for the site.
+
+    Args:
+        con: Initialized silver connection.
+        now: Time of the run.
+        out_dir: Target directory, created if missing.
+    """
+    out_dir.mkdir(parents=True, exist_ok=True)
+    for name, document in build(con, now).items():
+        (out_dir / f"{name}.json").write_text(
+            json.dumps(document, sort_keys=True, ensure_ascii=False, indent=1) + "\n",
+            encoding="utf-8",
+        )
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Build the site data from saved silver files.
+
+    Args:
+        argv: Command-line arguments (`--state` directory with `reviews.parquet`, `--out`
+            directory for the JSON files). Defaults to `sys.argv`.
+
+    Returns:
+        int: 0 on success, 1 when the state has no silver files (nothing is written).
+    """
+    parser = argparse.ArgumentParser(description="Build gold aggregates for the site.")
+    parser.add_argument("--state", type=Path, default=Path("data/state"))
+    parser.add_argument("--out", type=Path, default=Path("site/data"))
+    args = parser.parse_args(argv)
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+    if not (args.state / "reviews.parquet").exists():
+        log.error("no reviews.parquet in %s; nothing to aggregate", args.state)
+        return 1
+    con = duckdb.connect()
+    silver.load(con, args.state)
+    write(con, args.out, datetime.now(UTC))
+    log.info("gold written to %s from %d reviews", args.out, silver.count(con))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

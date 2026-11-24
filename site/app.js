@@ -1,7 +1,7 @@
 // Reads the aggregate files written by `python -m reviews_pipeline.gold`.
 // The names below are checked against the gold output by tests/test_site.py.
 // fields: meta.generated_at meta.last_success_at meta.newest_review_at meta.excluded_future_dates
-// fields: meta.coverage meta.drift
+// fields: meta.coverage meta.drift meta.platforms platform.id platform.label
 // fields: row.date row.n row.mean row.median row.low row.mid row.high row.repeated row.complete
 // fields: hour.hour hour.n
 
@@ -227,6 +227,19 @@ function renderNotes(platform, rows, meta) {
   }
 }
 
+// The choices come from the data: every platform gold found, plus "All platforms" when
+// there is more than one, so a new platform appears here without touching the page.
+function fillPlatformChoices(platforms) {
+  const choices = platforms.length > 1 ? [{ id: "all", label: "All platforms" }, ...platforms] : platforms;
+  const select = $("platform");
+  select.replaceChildren(...choices.map((p) => {
+    const option = document.createElement("option");
+    option.value = p.id;
+    option.textContent = p.label;
+    return option;
+  }));
+}
+
 function render() {
   const platform = $("platform").value;
   const rows = data.daily.platforms[platform] || [];
@@ -264,6 +277,7 @@ async function main() {
     return;
   }
   renderFreshness(data.meta);
+  fillPlatformChoices(data.meta.platforms);
   setInterval(() => renderFreshness(data.meta), 60_000);
   $("platform").addEventListener("change", render);
   window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", render);

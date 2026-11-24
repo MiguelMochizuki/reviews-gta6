@@ -4,7 +4,7 @@ from datetime import UTC, date, datetime
 import pytest
 from helpers import seeded_silver, utc_ms
 
-from reviews_pipeline import gold, silver
+from reviews_pipeline import config, gold, silver
 
 NOW = datetime(2026, 11, 24, 12, 0, tzinfo=UTC)
 PS5, XBOX = "playstation-5", "xbox-series-x"
@@ -313,3 +313,31 @@ def test_all_view_without_any_rows_is_empty():
     con = seeded_silver([])
     assert gold.daily(con, NOW)["all"] == [] and gold.hourly(con, NOW)["all"] == []
     assert gold.coverage(con)["all"] == gold.Coverage(None, None)
+
+
+def test_a_platform_added_to_the_registry_flows_through_everywhere(monkeypatch):
+    monkeypatch.setattr(config, "PLATFORM_LABELS", {**config.PLATFORM_LABELS, "pc": "PC"})
+    monkeypatch.setattr(config, "PLATFORMS", tuple(config.PLATFORM_LABELS))
+    rows = day_rows(PS5, "2026-11-23", [5, 5]) + day_rows("pc", "2026-11-23", [9])
+    out = gold.build(seeded_silver(rows), NOW)
+    assert set(out["daily"]["platforms"]) == {PS5, XBOX, "pc", "all"}
+    assert out["daily"]["platforms"]["pc"][0]["n"] == 1
+    assert out["daily"]["platforms"]["all"][0]["n"] == 3        # all adds the new platform in
+    assert out["meta"]["platforms"] == [
+        {"id": PS5, "label": "PlayStation 5"},
+        {"id": XBOX, "label": "Xbox Series X"},
+        {"id": "pc", "label": "PC"},
+    ]
+
+
+def test_a_platform_found_only_in_the_data_is_still_aggregated():
+    rows = day_rows(PS5, "2026-11-23", [5]) + day_rows("stadia", "2026-11-23", [9, 9])
+    out = gold.build(seeded_silver(rows), NOW)
+    assert out["daily"]["platforms"]["stadia"][0]["n"] == 2
+    assert out["daily"]["platforms"]["all"][0]["n"] == 3
+    assert out["meta"]["platforms"][-1] == {"id": "stadia", "label": "Stadia"}  # label from the slug
+
+
+def test_meta_lists_the_registered_platforms_even_before_they_have_data():
+    meta = gold.meta(seeded_silver([]), NOW)
+    assert [p["id"] for p in meta["platforms"]] == [PS5, XBOX]

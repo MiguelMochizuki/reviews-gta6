@@ -38,6 +38,7 @@ def test_app_reads_only_keys_that_gold_writes():
     assert platform and hour_rows  # the fixture must exercise every shape
     assert names["meta"] and names["row"] and names["hour"]
     assert names["meta"] <= set(out["meta"])
+    assert names["platform"] <= set(out["meta"]["platforms"][0])
     assert names["row"] <= set(platform[0])
     assert names["hour"] <= set(hour_rows[0])
 
@@ -59,3 +60,9 @@ def test_page_names_the_source_and_says_aggregates_only():
 
 def test_vendored_chart_library_keeps_its_license():
     assert "MIT" in (SITE / "vendor" / "CHART_LICENSE.txt").read_text()
+
+
+def test_platform_choices_come_from_the_data_not_from_the_page():
+    html = (SITE / "index.html").read_text()
+    assert "playstation-5" not in html and "xbox-series-x" not in html
+    assert "meta.platforms" in (SITE / "app.js").read_text()

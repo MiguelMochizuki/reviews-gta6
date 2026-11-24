@@ -83,3 +83,82 @@ def test_daily_platform_without_rows_is_an_empty_list():
     out = gold.daily(seeded_silver(day_rows(PS5, "2026-11-23", [5])), NOW)
     assert out[XBOX] == []
     assert set(out) == {PS5, XBOX}
+
+
+def at(day, hour, platform=PS5, score=5, text=None):
+    y, m, d = map(int, day.split("-"))
+    return (platform, score, day, utc_ms(y, m, d, hour), text or f"t {day} {hour} {score}")
+
+
+def test_hourly_counts_only_complete_hours():
+    con = seeded_silver([
+        at("2026-11-23", 9, score=9),                      # before the window: dropped
+        at("2026-11-23", 10, score=9), at("2026-11-23", 10, score=2),
+        at("2026-11-23", 10, score=6),
+        at("2026-11-23", 11, score=5), at("2026-11-23", 11, score=5, text="other"),
+    ])
+    rows = gold.hourly(con, NOW)[PS5]
+    assert rows == [
+        {"hour": "2026-11-23T10:00:00Z", "n": 3},
+        {"hour": "2026-11-23T11:00:00Z", "n": 2},
+    ]
+
+
+def test_hourly_never_includes_the_future():
+    con = seeded_silver([
+        at("2026-11-24", 9, score=9), at("2026-11-24", 9, score=2), at("2026-11-24", 9, score=6),
+        at("2026-11-24", 15, score=5),  # after NOW (12:00)
+    ])
+    assert [r["hour"] for r in gold.hourly(con, NOW)[PS5]] == ["2026-11-24T09:00:00Z"]
+
+
+def test_meta_freshness_fields():
+    rows = [
+        at("2026-11-23", 10), at("2026-11-24", 11),
+        at("2026-11-24", 20),                       # version after NOW: not "newest"
+        ("playstation-5", 5, "2027-11-21", utc_ms(2026, 11, 24, 8), "junk"),
+    ]
+    con = seeded_silver(rows, seen_at=datetime(2026, 11, 24, 11, 30))
+    meta = gold.meta(con, NOW)
+    assert meta["generated_at"] == "2026-11-24T12:00:00Z"
+    assert meta["last_success_at"] == "2026-11-24T11:30:00Z"
+    assert meta["newest_review_at"] == "2026-11-24T11:00:00Z"
+    assert (meta["rows"], meta["excluded_future_dates"]) == (4, 1)
+    assert meta["coverage"][XBOX] == {"window_start": None, "complete_from": None}
+
+
+def test_meta_on_empty_silver_has_nulls_and_zero_rows():
+    meta = gold.meta(seeded_silver([]), NOW)
+    assert meta["last_success_at"] is None and meta["newest_review_at"] is None
+    assert (meta["rows"], meta["excluded_future_dates"]) == (0, 0)
+    assert meta["drift"] == {PS5: None, XBOX: None}
+
+
+def drift_rows(latest_low):
+    """Three earlier days with 10% low scores, then a latest day with `latest_low` low scores."""
+    steady = [0] + [5] * 8 + [9]
+    rows = day_rows(PS5, "2026-11-18", [2, 6, 9])  # opens every band, so 19th onwards is complete
+    for day in ("2026-11-19", "2026-11-20", "2026-11-21"):
+        rows += day_rows(PS5, day, steady)
+    return rows + day_rows(PS5, "2026-11-22", [0] * latest_low + [5] * (9 - latest_low) + [9])
+
+
+def test_drift_flags_a_large_move_in_a_band_share():
+    drift = gold.meta(seeded_silver(drift_rows(6)), NOW)["drift"][PS5]
+    assert drift == {"date": "2026-11-22", "metric": "low", "delta_pp": 50.0}
+
+
+def test_drift_ignores_a_move_within_the_threshold():
+    assert gold.meta(seeded_silver(drift_rows(2)), NOW)["drift"][PS5] is None
+
+
+def test_drift_is_null_with_fewer_than_three_prior_days():
+    rows = day_rows(PS5, "2026-11-18", [2, 6, 9]) + day_rows(PS5, "2026-11-19", [0] * 9 + [9])
+    assert gold.meta(seeded_silver(rows), NOW)["drift"][PS5] is None
+
+
+def test_build_has_the_three_documents():
+    out = gold.build(seeded_silver(day_rows(PS5, "2026-11-23", [5])), NOW)
+    assert set(out) == {"meta", "daily", "hourly"}
+    assert set(out["daily"]["platforms"]) == {PS5, XBOX}
+    assert set(out["hourly"]["platforms"]) == {PS5, XBOX}

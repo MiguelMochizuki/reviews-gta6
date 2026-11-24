@@ -129,3 +129,118 @@ def daily(con: duckdb.DuckDBPyConnection, now: datetime) -> dict[str, list[dict]
             for day, n, mean, median, low, mid, high, repeated in rows
         ]
     return out
+
+
+def _iso(moment: datetime | None) -> str | None:
+    return None if moment is None else moment.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def hourly(con: duckdb.DuckDBPyConnection, now: datetime) -> dict[str, list[dict]]:
+    """Count reviews per UTC hour of their last write (`version_ms`), in complete hours only.
+
+    Args:
+        con: Initialized silver connection.
+        now: Time of the run. Later versions are left out.
+
+    Returns:
+        dict[str, list[dict]]: Per platform, rows `{"hour": "...Z", "n": int}` sorted by hour,
+            starting at the first full hour at or after the platform's window start.
+    """
+    now_ms = int(now.timestamp() * 1000)
+    out: dict[str, list[dict]] = {}
+    for platform, cover in coverage(con).items():
+        if cover.window_start is None:
+            out[platform] = []
+            continue
+        start = cover.window_start
+        first_ms = int(start.replace(minute=0, second=0, microsecond=0).timestamp() * 1000)
+        if start.minute or start.second or start.microsecond:
+            first_ms += 3_600_000
+        rows = con.execute(
+            "SELECT version_ms // 3600000 * 3600000 AS hour_ms, count(*) FROM reviews "
+            "WHERE platform = ? AND version_ms >= ? AND version_ms <= ? "
+            "GROUP BY hour_ms ORDER BY hour_ms",
+            [platform, first_ms, now_ms],
+        ).fetchall()
+        out[platform] = [
+            {"hour": _iso(datetime.fromtimestamp(hour_ms / 1000, tz=UTC)), "n": n}
+            for hour_ms, n in rows
+        ]
+    return out
+
+
+DRIFT_THRESHOLD_PP = 15.0
+DRIFT_MIN_PRIOR_DAYS = 3
+
+
+def _drift(days: list[dict]) -> dict | None:
+    """Compare the latest complete day's low/high score shares with the earlier days' mean."""
+    complete = [day for day in days if day["complete"]]
+    if len(complete) <= DRIFT_MIN_PRIOR_DAYS:
+        return None
+    *prior, latest = complete
+    best = None
+    for metric in ("low", "high"):
+        mean_share = sum(day[metric] / day["n"] for day in prior) / len(prior)
+        delta = (latest[metric] / latest["n"] - mean_share) * 100
+        if abs(delta) > DRIFT_THRESHOLD_PP and (best is None or abs(delta) > abs(best[1])):
+            best = (metric, delta)
+    if best is None:
+        return None
+    return {"date": latest["date"], "metric": best[0], "delta_pp": round(best[1], 1)}
+
+
+def meta(con: duckdb.DuckDBPyConnection, now: datetime) -> dict:
+    """Describe how fresh and how complete the aggregates are.
+
+    Args:
+        con: Initialized silver connection.
+        now: Time of the run.
+
+    Returns:
+        dict: `generated_at`, `last_success_at` (latest `last_seen_at`), `newest_review_at`
+            (latest `version_ms` not after `now`), `rows`, `excluded_future_dates`,
+            `coverage` and `drift` per platform. Times are ISO UTC strings or None.
+    """
+    now = now.astimezone(UTC)
+    now_ms = int(now.timestamp() * 1000)
+    last_seen, newest_ms, rows, excluded = con.execute(
+        "SELECT max(last_seen_at), max(version_ms) FILTER (WHERE version_ms <= ?), "
+        "count(*), count(*) FILTER (WHERE date > ?) FROM reviews",
+        [now_ms, valid_days(now)],
+    ).fetchone()
+    days = daily(con, now)
+    return {
+        "generated_at": _iso(now),
+        "last_success_at": _iso(last_seen.replace(tzinfo=UTC)) if last_seen else None,
+        "newest_review_at": (
+            _iso(datetime.fromtimestamp(newest_ms / 1000, tz=UTC)) if newest_ms else None
+        ),
+        "rows": rows,
+        "excluded_future_dates": excluded,
+        "coverage": {
+            platform: {
+                "window_start": _iso(cover.window_start),
+                "complete_from": cover.complete_from.isoformat() if cover.complete_from else None,
+            }
+            for platform, cover in coverage(con).items()
+        },
+        "drift": {platform: _drift(days[platform]) for platform in PLATFORMS},
+    }
+
+
+def build(con: duckdb.DuckDBPyConnection, now: datetime) -> dict[str, dict]:
+    """Build the three published documents.
+
+    Args:
+        con: Initialized silver connection.
+        now: Time of the run.
+
+    Returns:
+        dict[str, dict]: `meta`, `daily` and `hourly`, ready to be written as JSON.
+    """
+    return {
+        "meta": meta(con, now),
+        "daily": {"platforms": daily(con, now)},
+        "hourly": {"platforms": hourly(con, now)},
+    }

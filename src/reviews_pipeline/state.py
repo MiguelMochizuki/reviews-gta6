@@ -32,6 +32,14 @@ class GhReleaseStore:
             *patterns, allow_missing=True,
         )
 
+    def prepare(self) -> None:
+        """Create the state release if missing, so a broken setup fails before collecting.
+
+        Raises:
+            RuntimeError: If the release cannot be created, for example in an empty repository.
+        """
+        self._ensure_release(self.tag)
+
     def pull(self, dest: Path) -> None:
         """Download the state files, restoring any missing one from its `.prev` backup.
 

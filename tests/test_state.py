@@ -161,3 +161,16 @@ def test_push_sends_bronze_to_a_monthly_release_without_clobber(tmp_path):
     assert "20261124T120000-head.parquet" not in gh.assets["state"]
     bronze_upload = next(a for a in gh.calls if a[1:3] == ["release", "upload"] and "bronze" in a[3])
     assert "--clobber" not in bronze_upload
+
+
+def test_prepare_creates_the_state_release_before_any_upload(tmp_path):
+    gh = FakeGh(releases=())
+    GhReleaseStore(REPO, runner=gh).prepare()
+    assert "state" in gh.releases
+    assert ("release", "upload") not in gh.verbs()
+
+
+def test_prepare_surfaces_a_release_creation_error():
+    gh = FakeGh(releases=(), respond=lambda a: (1, "Repository is empty.") if a[2] == "create" else None)
+    with pytest.raises(RuntimeError, match="empty"):
+        GhReleaseStore(REPO, runner=gh).prepare()

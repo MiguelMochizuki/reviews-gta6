@@ -14,12 +14,20 @@ NOW = datetime(2026, 11, 24, 12, 0)
 
 
 class FakeStore:
-    def __init__(self):
+    def __init__(self, prepare_error=None):
         self.pulls = 0
         self.pushes = 0
         self.pushed_count = None
+        self.prepare_error = prepare_error
+        self.order = []
+
+    def prepare(self):
+        self.order.append("prepare")
+        if self.prepare_error:
+            raise RuntimeError(self.prepare_error)
 
     def pull(self, dest):
+        self.order.append("pull")
         self.pulls += 1
 
     def push(self, src):
@@ -100,3 +108,15 @@ def test_logs_contain_no_review_text_or_author(tmp_path, caplog):
     go(FakeClient(served=5, item=lambda i: make_item(i, score=11)), FakeStore(), tmp_path)
     for needle in ("text 1", "user1", "salt"):
         assert needle not in caplog.text
+
+
+def test_run_prepares_the_store_before_pulling_or_requesting(tmp_path):
+    store = FakeStore()
+    go(FakeClient(served=5), store, tmp_path)
+    assert store.order[:2] == ["prepare", "pull"]
+
+
+def test_run_fails_before_any_request_when_the_store_is_not_ready(tmp_path):
+    store, client = FakeStore(prepare_error="Repository is empty."), FakeClient(served=5)
+    assert go(client, store, tmp_path) == 1
+    assert client.offsets == []

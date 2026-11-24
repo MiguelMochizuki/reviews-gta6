@@ -48,6 +48,11 @@ def run(
     if not salt:
         log.error("AUTHOR_SALT is not set; refusing to run")
         return 1
+    try:
+        store.prepare()
+    except RuntimeError as error:
+        log.error("state store is not ready: %s", error)
+        return 1
     store.pull(workdir)
     con = duckdb.connect()
     silver.load(con, workdir)

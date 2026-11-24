@@ -80,3 +80,33 @@ def test_pages_artifact_contains_only_the_site_directory():
     step = t[t.index("upload-pages-artifact"):]
     assert "path: site" in step.split("\n\n")[0] or "path: site\n" in step
     assert "path: data" not in t and "upload-artifact@" not in t
+
+
+def test_collect_installs_the_nlp_group_and_never_syncs_it_away():
+    t = text()
+    assert "uv sync --no-default-groups --group nlp" in t
+    for line in t.splitlines():
+        if "uv run" in line:
+            assert "--no-sync" in line, line  # a re-sync would drop the nlp group
+
+
+def test_enrichment_runs_between_collection_and_gold_without_the_author_salt():
+    t = text()
+    start = t.index("name: Enrich topics")
+    step = t[start:t.index("name: Build site data")]
+    assert t.index("name: Collect\n") < start
+    assert "id: enrich" in step and "continue-on-error: true" in step
+    assert "reviews_pipeline.enrich" in step and "AUTHOR_SALT" not in step
+    assert "STATE_REPO" in step and "GH_TOKEN" in step
+    assert "github.event.schedule == '37 3 * * *'" in step  # same deep/head choice as Collect
+
+
+def test_failure_is_reported_when_only_enrichment_failed():
+    t = text()
+    report = t[t.index("name: Report failure"):]
+    assert "if: failure() || steps.enrich.outcome == 'failure'" in report
+
+
+def test_ci_installs_the_nlp_group():
+    ci = (WORKFLOW.parent / "ci.yml").read_text()
+    assert "uv sync --no-default-groups --group dev --group nlp" in ci

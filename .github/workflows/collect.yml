@@ -41,6 +41,7 @@ jobs:
       - name: Enrich topics
         id: enrich
         continue-on-error: true
+        timeout-minutes: 60 # a timeout counts as a failure: gold still builds and an issue opens
         env:
           STATE_REPO: ${{ vars.STATE_REPO }}
           GH_TOKEN: ${{ secrets.STATE_TOKEN }}

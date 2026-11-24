@@ -110,3 +110,10 @@ def test_failure_is_reported_when_only_enrichment_failed():
 def test_ci_installs_the_nlp_group():
     ci = (WORKFLOW.parent / "ci.yml").read_text()
     assert "uv sync --no-default-groups --group dev --group nlp" in ci
+
+
+def test_enrichment_step_has_its_own_timeout_inside_the_job_limit():
+    t = text()
+    step = t[t.index("name: Enrich topics"):t.index("name: Build site data")]
+    minutes = int(re.search(r"timeout-minutes: (\d+)", step).group(1))
+    assert 0 < minutes < 120  # a timeout is a step failure, so gold and the issue still run

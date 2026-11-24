@@ -15,7 +15,7 @@ from reviews_pipeline.config import PLATFORMS, SENTIMENTS
 from reviews_pipeline.http import CircuitOpen, PoliteClient
 from reviews_pipeline.quality import ContractError, check_silver, write_bronze
 from reviews_pipeline.sources.metacritic import ShortPage
-from reviews_pipeline.state import GhReleaseStore
+from reviews_pipeline.state import OPTIONAL_STATE_FILES, GhReleaseStore
 from reviews_pipeline.sweeps import EmptyRunError, RunStats, check_volume, sweep
 
 log = logging.getLogger("reviews_pipeline")
@@ -54,6 +54,8 @@ def run(
         log.error("state store is not ready: %s", error)
         return 1
     store.pull(workdir)
+    for name in OPTIONAL_STATE_FILES:
+        (workdir / name).unlink(missing_ok=True)  # the topic enrichment owns these; never re-push
     con = duckdb.connect()
     silver.load(con, workdir)
     previous = silver.count(con)

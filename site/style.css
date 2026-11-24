@@ -1,0 +1,48 @@
+:root {
+  color-scheme: light dark;
+  --surface: #fcfcfb; --panel: #f4f3f0; --grid: #e4e3de;
+  --text: #0b0b0b; --text-2: #52514e; --text-3: #6f6e69;
+  --series: #2a78d6; --low: #e34948; --mid: #8f8e87; --high: #2a78d6;
+  --ok: #0a7a0a; --stale: #b3261e;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --surface: #1a1a19; --panel: #242422; --grid: #333330;
+    --text: #f0efec; --text-2: #c3c2b7; --text-3: #a09f96;
+    --series: #3987e5; --low: #e66767; --mid: #b3b2a9; --high: #3987e5;
+    --ok: #4cc24c; --stale: #ff8a80;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0 auto; max-width: 960px; padding: 24px 16px 48px;
+  background: var(--surface); color: var(--text);
+  font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+h1 { font-size: 1.6rem; margin: 0 0 4px; }
+h2 { font-size: 1rem; margin: 0; }
+.lede, .muted { color: var(--text-2); margin: 0; }
+.muted { font-size: .875rem; }
+.panel, .note {
+  background: var(--panel); border-radius: 8px; padding: 12px 16px; margin: 16px 0;
+}
+.panel p { margin: 0; }
+.note { color: var(--text-2); font-size: .9rem; }
+#fresh-status { font-weight: 600; }
+#fresh-status.ok::before { content: "● "; color: var(--ok); }
+#fresh-status.stale { color: var(--stale); }
+#fresh-status.stale::before { content: "▲ "; }
+.filters { display: flex; gap: 8px; align-items: center; margin: 16px 0; }
+select { font: inherit; color: inherit; background: var(--panel); border: 1px solid var(--grid);
+  border-radius: 6px; padding: 4px 8px; }
+figure { margin: 0 0 32px; }
+figcaption { display: flex; flex-direction: column; margin-bottom: 8px; }
+.chart { position: relative; height: 260px; }
+details { margin-top: 8px; }
+.table-wrap { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: .85rem; font-variant-numeric: tabular-nums; }
+th, td { text-align: right; padding: 4px 8px; border-bottom: 1px solid var(--grid); }
+th:first-child, td:first-child { text-align: left; }
+footer { margin-top: 40px; color: var(--text-3); font-size: .8rem; }
+a { color: var(--series); }
+[hidden] { display: none !important; }

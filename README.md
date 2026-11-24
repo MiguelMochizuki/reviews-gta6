@@ -8,12 +8,14 @@ The dataset has 51,385 reviews of GTA 6 on PlayStation 5 (90%) and Xbox Series X
 
 - A notebook that follows CRISP-DM: it checks data quality, describes scores, platforms, time and languages, then fits a topic model on the English reviews and relates each topic to the score.
 - A collection pipeline (`src/reviews_pipeline`) that fetches reviews from the public Metacritic endpoint on a schedule, stores raw responses (bronze) and a deduplicated, versioned review table (silver), and keeps its state in a private GitHub release.
+- A static site (`site/`) that shows daily and hourly aggregates of that data, published to GitHub Pages after each collection.
 
 ### Status and limitations
 
 - The notebook sample covers about five launch days, so it says nothing about reception after patches.
 - The topic model uses English reviews only (78% of the data) and reviews with at least 10 tokens (58% of the data).
-- The pipeline covers collection and the silver layer. The gold layer, the published site and topic enrichment are not built yet.
+- The pipeline covers collection, the silver layer, the gold aggregates and the site. Topic enrichment is not built yet.
+- Each query reaches at most the 10,000 newest reviews, so on PlayStation 5 the first days are only partly collected. The site marks those days as partial. A few reviews carry impossible dates (tomorrow, years ahead); they are excluded from the aggregates and counted.
 - The endpoint is public but undocumented, and each query reaches at most 10,000 results. The pipeline collects politely: one request every 3 seconds, retries with backoff, and a stop after repeated 429/5xx responses.
 
 ## Quick Start
@@ -52,18 +54,26 @@ jupyter lab notebooks/reviews_gta6.ipynb
 ```
 reviews-gta6/
 ├── .github/                # GitHub config
-│   └── workflows/          # CI and scheduled collection
+│   └── workflows/          # CI, scheduled collection and Pages deploy
 │       ├── ci.yml
 │       └── collect.yml
 ├── notebooks/
 │   └── reviews_gta6.ipynb  # EDA + LDA
 ├── scripts/                # one-off live checks
 │   └── verify_endpoint.py
+├── site/                   # static tracker page (aggregates only)
+│   ├── vendor/
+│   │   ├── chart.umd.min.js
+│   │   └── CHART_LICENSE.txt
+│   ├── app.js
+│   ├── index.html
+│   └── style.css
 ├── src/                    # source code
 │   └── reviews_pipeline/   # collection pipeline package
 │       ├── sources/
 │       ├── __init__.py
 │       ├── config.py
+│       ├── gold.py
 │       ├── http.py
 │       ├── quality.py
 │       ├── run.py
@@ -72,16 +82,19 @@ reviews-gta6/
 │       └── sweeps.py
 ├── tests/                  # pytest suite, no network
 │   ├── helpers.py
+│   ├── test_gold.py
 │   ├── test_http.py
 │   ├── test_metacritic.py
 │   ├── test_quality.py
 │   ├── test_run.py
 │   ├── test_silver.py
+│   ├── test_site.py
 │   ├── test_smoke.py
 │   ├── test_state.py
 │   ├── test_sweeps.py
 │   └── test_workflows.py
 ├── .gitignore
+├── .python-version
 ├── CONTRIBUTING.md
 ├── pyproject.toml          # dependencies and tool config (uv)
 ├── README.md
@@ -94,6 +107,7 @@ reviews-gta6/
 
 - `notebooks/reviews_gta6.ipynb` holds the whole analysis. Its sections map to CRISP-DM. Cells share state, so run it top to bottom.
 - `src/reviews_pipeline/sources/metacritic.py` is the source adapter: paging and normalization. A new source is a module with the same two functions.
+- `src/reviews_pipeline/gold.py` turns silver into the aggregate JSON files the site reads: daily counts, score bands, repeated-text share, hourly counts, freshness and a drift note. `site/` holds the page (plain HTML and JS, Chart.js vendored).
 - `src/reviews_pipeline/sweeps.py` runs head and deep sweeps. `silver.py` keeps the review and version tables. `quality.py` holds the data contracts and the bronze writer. `state.py` moves state to and from the private release. `run.py` is the command-line entry point.
 
 ## Main Tools & Stack
@@ -135,6 +149,8 @@ State lives in a release named `state` of a private repository, so the collectio
 | `STATE_TOKEN` | repository secret | fine-grained token with write access to releases of the private repository |
 | `AUTHOR_SALT` | repository secret | secret key used to hash author names |
 
+Publishing needs GitHub Pages enabled once, with source "GitHub Actions" (Settings, Pages, or `gh api -X POST repos/<owner>/reviews-gta6/pages -f build_type=workflow`).
+
 Trigger a run by hand from the Actions tab (Collect reviews, Run workflow), choosing `head` or `deep`. Locally:
 
 ```bash
@@ -142,7 +158,9 @@ export STATE_REPO=owner/name AUTHOR_SALT=some-secret
 uv run python -m reviews_pipeline.run --mode head
 ```
 
-A head sweep walks the newest reviews of each platform and sentiment until it reaches a page it already stores. A deep sweep walks every page up to the 10,000 cap and catches edits to older reviews. Raw responses are written as one bronze file per run, uploaded to a monthly release (`bronze-YYYY-MM`) of the private repository to stay under the 1,000-assets-per-release limit. Author names are only hashed in silver.
+A head sweep walks the newest reviews of each platform and sentiment until it reaches a page it already stores. A deep sweep walks every page up to the 10,000 cap and catches edits to older reviews. After a successful collection the workflow builds the gold files and deploys `site/` to GitHub Pages. Only aggregates are published; silver and bronze never leave the private release. The page says the data is stale when the last successful run is more than 3 hours old.
+
+Raw responses are written as one bronze file per run, uploaded to a monthly release (`bronze-YYYY-MM`) of the private repository to stay under the 1,000-assets-per-release limit. Author names are only hashed in silver.
 
 ### Run the notebook headless
 

@@ -7,7 +7,19 @@ dependencies = [
     "pandas", "numpy", "scipy", "matplotlib", "seaborn", "scikit-learn",
     "nltk", "gensim", "pyldavis", "lingua-language-detector", "tqdm",
     "jupyterlab", "ipykernel", "kaggle",
+    "httpx", "duckdb",
 ]
+
+[dependency-groups]
+dev = ["pytest", "ruff"]
 
 [tool.uv]
 package = false
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+extend-exclude = ["notebooks"]

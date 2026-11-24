@@ -3,41 +3,12 @@ import hmac
 import uuid
 
 import pytest
+from helpers import FakeClient, make_item
 
 from reviews_pipeline.config import MAX_OFFSET, PAGE_LIMIT
 from reviews_pipeline.sources import metacritic
 
 L = PAGE_LIMIT
-
-
-def make_item(i, **overrides):
-    item = {
-        "id": str(uuid.UUID(int=i)),
-        "quote": f"text {i}",
-        "score": 7,
-        "date": "2026-11-24",
-        "author": f"user{i}",
-        "version": 1795548626092 + i,
-        "spoiler": False,
-        "platform": "PlayStation 5",
-    }
-    item.update(overrides)
-    return item
-
-
-class FakeClient:
-    """Serves `served` items per query; reports `total` as totalResults."""
-
-    def __init__(self, served, total=None):
-        self.served = served
-        self.total = served if total is None else total
-        self.offsets = []
-
-    def get_json(self, url, params):
-        offset = params["offset"]
-        self.offsets.append(offset)
-        items = [make_item(i) for i in range(offset, min(offset + params["limit"], self.served))]
-        return {"data": {"totalResults": self.total, "items": items}}
 
 
 def pages(client, **kwargs):
@@ -68,17 +39,6 @@ def test_iter_pages_stops_at_cap_exactly_ten_thousand():
     pages(client)
     assert client.offsets[-1] == MAX_OFFSET
     assert 10_000 not in client.offsets
-
-
-def test_iter_pages_stops_after_known_page():
-    client = FakeClient(served=10 * L)
-    calls = []
-
-    def is_known(page):
-        calls.append(1)
-        return len(calls) == 2
-
-    assert len(pages(client, is_known=is_known)) == 2
 
 
 def test_normalize_hashes_author_and_drops_name():

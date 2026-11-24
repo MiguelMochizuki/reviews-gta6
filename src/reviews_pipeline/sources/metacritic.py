@@ -2,7 +2,7 @@
 
 import hashlib
 import hmac
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 
 from reviews_pipeline.config import BASE_URL, MAX_OFFSET, PAGE_LIMIT
 from reviews_pipeline.http import PoliteClient
@@ -21,7 +21,6 @@ def iter_pages(
     platform: str,
     sentiment: str,
     sort: str = "date",
-    is_known: Callable[[list[dict]], bool] = lambda page: False,
 ) -> Iterator[list[dict]]:
     """Yield raw item pages, newest first, never past the 10,000-result cap."""
     url = BASE_URL.format(platform=platform)
@@ -38,7 +37,7 @@ def iter_pages(
         if not items:
             return
         yield items
-        if len(items) < PAGE_LIMIT or offset + PAGE_LIMIT >= data["totalResults"] or is_known(items):
+        if len(items) < PAGE_LIMIT or offset + PAGE_LIMIT >= data["totalResults"]:
             return
 
 

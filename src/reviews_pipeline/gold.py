@@ -18,6 +18,9 @@ log = logging.getLogger("reviews_pipeline")
 # only partly: its filters are 0-4 / 5-7 / 8-10, used below to find the collection window.
 BANDS = {"low": (0, 1), "mid": (2, 8), "high": (9, 10)}
 _SENTIMENT_BANDS = ((0, 4), (5, 7), (8, 10))
+# A sentiment query reaches at most 10,000 reviews (config.MAX_OFFSET + PAGE_LIMIT); a band
+# holding at least this many rows is treated as capped, with some room for duplicates.
+CAPPED_ROWS = 9_900
 
 
 @dataclass
@@ -54,7 +57,9 @@ def coverage(con: duckdb.DuckDBPyConnection) -> dict[str, Coverage]:
 
     Each sentiment query reaches at most 10,000 newest reviews, so a capped band only
     covers time since its oldest `version_ms`. The window starts at the latest such
-    start over the bands that have rows, and the first complete day is the day after.
+    start over the capped bands (those with at least `CAPPED_ROWS` rows), and the first
+    complete day is the day after. When no band is capped, every review the platform has
+    is collected, so it is complete from the day of its first review.
 
     Args:
         con: Initialized silver connection.
@@ -64,20 +69,25 @@ def coverage(con: duckdb.DuckDBPyConnection) -> dict[str, Coverage]:
     """
     result = {}
     for platform in PLATFORMS:
-        starts = []
+        starts, capped = [], []
         for low, high in _SENTIMENT_BANDS:
-            (start,) = con.execute(
-                "SELECT min(version_ms) FROM reviews "
+            start, rows = con.execute(
+                "SELECT min(version_ms), count(*) FROM reviews "
                 "WHERE platform = ? AND score BETWEEN ? AND ?",
                 [platform, low, high],
             ).fetchone()
             if start is not None:
                 starts.append(start)
+                if rows >= CAPPED_ROWS:
+                    capped.append(start)
         if not starts:
             result[platform] = Coverage(None, None)
-            continue
-        window_start = datetime.fromtimestamp(max(starts) / 1000, tz=UTC)
-        result[platform] = Coverage(window_start, window_start.date() + timedelta(days=1))
+        elif capped:
+            window_start = datetime.fromtimestamp(max(capped) / 1000, tz=UTC)
+            result[platform] = Coverage(window_start, window_start.date() + timedelta(days=1))
+        else:
+            window_start = datetime.fromtimestamp(min(starts) / 1000, tz=UTC)
+            result[platform] = Coverage(window_start, window_start.date())
     return result
 
 
@@ -98,8 +108,9 @@ def daily(con: duckdb.DuckDBPyConnection, now: datetime) -> dict[str, list[dict]
     Returns:
         dict[str, list[dict]]: Per platform, rows sorted by date with the keys `date`, `n`,
             `mean`, `median`, `low`, `mid`, `high`, `repeated` (share of reviews whose
-            normalized text appears in two or more reviews; empty text never counts) and
-            `complete` (whether the day is at or after the platform's `complete_from`).
+            normalized text appears in two or more reviews on any platform; empty text never
+            counts) and `complete` (the day is at or after the platform's `complete_from`
+            and is over, so today is never complete).
     """
     cover = coverage(con)
     last_day = valid_days(now)
@@ -108,18 +119,19 @@ def daily(con: duckdb.DuckDBPyConnection, now: datetime) -> dict[str, list[dict]
         rows = con.execute(
             f"""
             WITH norm AS (
-                SELECT date, score,
+                SELECT platform, date, score,
                        lower(trim(regexp_replace(text, '\\s+', ' ', 'g'))) AS key
-                FROM reviews WHERE platform = ? AND date <= ?
+                FROM reviews WHERE date <= ?
             ), seen AS (
                 SELECT key, count(*) AS c FROM norm WHERE key <> '' GROUP BY key
             )
             SELECT norm.date, count(*), avg(norm.score), median(norm.score), {_band_counts()},
                    avg(CASE WHEN seen.c >= 2 THEN 1.0 ELSE 0.0 END)
             FROM norm LEFT JOIN seen USING (key)
+            WHERE norm.platform = ?
             GROUP BY norm.date ORDER BY norm.date
             """,
-            [platform, last_day],
+            [last_day, platform],
         ).fetchall()
         from_day = cover[platform].complete_from
         out[platform] = [
@@ -132,7 +144,7 @@ def daily(con: duckdb.DuckDBPyConnection, now: datetime) -> dict[str, list[dict]
                 "mid": mid,
                 "high": high,
                 "repeated": round(repeated, 4),
-                "complete": from_day is not None and day >= from_day,
+                "complete": from_day is not None and from_day <= day < last_day,
             }
             for day, n, mean, median, low, mid, high, repeated in rows
         ]
@@ -148,13 +160,20 @@ def hourly(con: duckdb.DuckDBPyConnection, now: datetime) -> dict[str, list[dict
 
     Args:
         con: Initialized silver connection.
-        now: Time of the run. Later versions are left out.
+        now: Time of the run.
 
     Returns:
         dict[str, list[dict]]: Per platform, rows `{"hour": "...Z", "n": int}` sorted by hour,
-            starting at the first full hour at or after the platform's window start.
+            from the first full hour at or after the platform's window start up to the hour
+            before the latest collection started (an hour still being filled is left out).
     """
-    now_ms = int(now.timestamp() * 1000)
+    (last_seen,) = con.execute("SELECT max(last_seen_at) FROM reviews").fetchone()
+    if last_seen is None:
+        return {platform: [] for platform in PLATFORMS}
+    # The collection that wrote silver started at `last_seen`: the hour it started in was
+    # still being filled, so only hours before it are complete.
+    cutoff = min(now, last_seen.replace(tzinfo=UTC)).replace(minute=0, second=0, microsecond=0)
+    cutoff_ms = int(cutoff.timestamp() * 1000)
     out: dict[str, list[dict]] = {}
     for platform, cover in coverage(con).items():
         if cover.window_start is None:
@@ -166,9 +185,9 @@ def hourly(con: duckdb.DuckDBPyConnection, now: datetime) -> dict[str, list[dict
             first_ms += 3_600_000
         rows = con.execute(
             "SELECT version_ms // 3600000 * 3600000 AS hour_ms, count(*) FROM reviews "
-            "WHERE platform = ? AND version_ms >= ? AND version_ms <= ? "
+            "WHERE platform = ? AND version_ms >= ? AND version_ms < ? "
             "GROUP BY hour_ms ORDER BY hour_ms",
-            [platform, first_ms, now_ms],
+            [platform, first_ms, cutoff_ms],
         ).fetchall()
         out[platform] = [
             {"hour": _iso(datetime.fromtimestamp(hour_ms / 1000, tz=UTC)), "n": n}
@@ -179,18 +198,22 @@ def hourly(con: duckdb.DuckDBPyConnection, now: datetime) -> dict[str, list[dict
 
 DRIFT_THRESHOLD_PP = 15.0
 DRIFT_MIN_PRIOR_DAYS = 3
+DRIFT_MIN_LATEST_REVIEWS = 30  # below this a share swings by chance, and the page draws none
 
 
 def _drift(days: list[dict], today: date) -> dict | None:
-    """Compare the latest finished complete day's low/high shares with the earlier days' mean."""
+    """Compare the latest finished complete day's low/high shares with the earlier days, pooled."""
     complete = [day for day in days if day["complete"] and day["date"] < today.isoformat()]
     if len(complete) <= DRIFT_MIN_PRIOR_DAYS:
         return None
     *prior, latest = complete
+    if latest["n"] < DRIFT_MIN_LATEST_REVIEWS:
+        return None
     best = None
+    prior_reviews = sum(day["n"] for day in prior)
     for metric in ("low", "high"):
-        mean_share = sum(day[metric] / day["n"] for day in prior) / len(prior)
-        delta = (latest[metric] / latest["n"] - mean_share) * 100
+        prior_share = sum(day[metric] for day in prior) / prior_reviews  # pooled, not a mean
+        delta = (latest[metric] / latest["n"] - prior_share) * 100
         if abs(delta) > DRIFT_THRESHOLD_PP and (best is None or abs(delta) > abs(best[1])):
             best = (metric, delta)
     if best is None:

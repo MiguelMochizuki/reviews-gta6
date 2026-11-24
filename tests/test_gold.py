@@ -1,12 +1,19 @@
 import json
 from datetime import UTC, date, datetime
 
+import pytest
 from helpers import seeded_silver, utc_ms
 
 from reviews_pipeline import gold, silver
 
 NOW = datetime(2026, 11, 24, 12, 0, tzinfo=UTC)
 PS5, XBOX = "playstation-5", "xbox-series-x"
+
+
+@pytest.fixture(autouse=True)
+def every_band_is_capped(monkeypatch):
+    """Tests treat any band with rows as capped, like the 10,000-result queries; some override."""
+    monkeypatch.setattr(gold, "CAPPED_ROWS", 1)
 
 
 def test_coverage_window_start_is_latest_band_start():
@@ -137,11 +144,11 @@ def test_meta_on_empty_silver_has_nulls_and_zero_rows():
 
 def drift_rows(latest_low):
     """Three earlier days with 10% low scores, then a latest day with `latest_low` low scores."""
-    steady = [0] + [5] * 8 + [9]
+    steady = ([0] + [5] * 8 + [9]) * 3
     rows = day_rows(PS5, "2026-11-18", [2, 6, 9])  # opens every band, so 19th onwards is complete
     for day in ("2026-11-19", "2026-11-20", "2026-11-21"):
         rows += day_rows(PS5, day, steady)
-    return rows + day_rows(PS5, "2026-11-22", [0] * latest_low + [5] * (9 - latest_low) + [9])
+    return rows + day_rows(PS5, "2026-11-22", ([0] * (3 * latest_low) + [5] * (3 * (9 - latest_low)) + [9] * 3))
 
 
 def test_drift_flags_a_large_move_in_a_band_share():
@@ -208,3 +215,58 @@ def test_main_writes_files_from_saved_silver(tmp_path):
     out = tmp_path / "out"
     assert gold.main(["--state", str(tmp_path / "state"), "--out", str(out)]) == 0
     assert (out / "daily.json").exists()
+
+
+def test_hourly_leaves_out_the_hour_still_being_collected():
+    base = [at("2026-11-23", 10, score=9), at("2026-11-23", 10, score=2), at("2026-11-23", 10, score=6)]
+    rows = base + [at("2026-11-24", 11, score=5), ("playstation-5", 5, "2026-11-24", utc_ms(2026, 11, 24, 12) + 5 * 60_000, "x")]
+    con = seeded_silver(rows, seen_at=datetime(2026, 11, 24, 12, 7))  # run at 12:07
+    hours = [r["hour"] for r in gold.hourly(con, datetime(2026, 11, 24, 12, 10, tzinfo=UTC))[PS5]]
+    assert hours == ["2026-11-23T10:00:00Z", "2026-11-24T11:00:00Z"]
+
+
+def test_daily_marks_today_as_incomplete_even_with_full_coverage():
+    rows = day_rows(PS5, "2026-11-22", [9, 2, 6]) + day_rows(PS5, "2026-11-23", [9, 2, 6]) + day_rows(PS5, "2026-11-24", [9, 2, 6])
+    flags = {r["date"]: r["complete"] for r in only(gold.daily(seeded_silver(rows), NOW))}
+    assert flags == {"2026-11-22": False, "2026-11-23": True, "2026-11-24": False}
+
+
+def test_repeated_texts_are_found_across_platforms():
+    rows = day_rows(PS5, "2026-11-23", [5], ["same copy-pasted text"]) + day_rows(XBOX, "2026-11-23", [5], ["Same copy-pasted  text"])
+    out = gold.daily(seeded_silver(rows), NOW)
+    assert out[PS5][0]["repeated"] == 1.0 and out[XBOX][0]["repeated"] == 1.0
+
+
+def test_coverage_uncapped_platform_is_complete_from_its_first_day(monkeypatch):
+    monkeypatch.setattr(gold, "CAPPED_ROWS", 100)  # no band comes near the cap
+    con = seeded_silver([
+        (XBOX, 9, "2026-11-20", utc_ms(2026, 11, 20, 20), "a"),
+        (XBOX, 2, "2026-11-21", utc_ms(2026, 11, 21, 8), "b"),
+        (XBOX, 6, "2026-11-22", utc_ms(2026, 11, 22, 9), "c"),
+    ])
+    cov = gold.coverage(con)[XBOX]
+    assert cov.window_start == datetime(2026, 11, 20, 20, tzinfo=UTC)
+    assert cov.complete_from == date(2026, 11, 20)
+
+
+def test_coverage_uses_only_the_capped_bands(monkeypatch):
+    monkeypatch.setattr(gold, "CAPPED_ROWS", 3)
+    rows = [(PS5, 2, "2026-11-22", utc_ms(2026, 11, 22, 1 + i), f"n{i}") for i in range(3)]   # negative: capped
+    rows += [(PS5, 9, "2026-11-22", utc_ms(2026, 11, 22, 20), "p"), (PS5, 6, "2026-11-19", utc_ms(2026, 11, 19, 5), "m")]  # uncapped bands: ignored
+    cov = gold.coverage(seeded_silver(rows))[PS5]
+    assert cov.window_start == datetime(2026, 11, 22, 1, tzinfo=UTC)
+    assert cov.complete_from == date(2026, 11, 23)
+
+
+def test_drift_is_skipped_when_the_latest_day_is_small():
+    rows = drift_rows(6)[:-30] + day_rows(PS5, "2026-11-22", [0] * 10 + [5] * 5 + [9] * 5)  # 20 reviews
+    assert gold.meta(seeded_silver(rows), NOW)["drift"][PS5] is None
+
+
+def test_drift_pools_the_prior_days_instead_of_averaging_shares():
+    rows = day_rows(PS5, "2026-11-18", [2, 6, 9])
+    rows += day_rows(PS5, "2026-11-19", [0] * 10 + [5] * 90) + day_rows(PS5, "2026-11-20", [0] * 10 + [5] * 90)
+    rows += day_rows(PS5, "2026-11-21", [0] * 30)                       # tiny day, 100% low
+    rows += day_rows(PS5, "2026-11-22", [0] * 50 + [5] * 50)            # latest, 50% low
+    drift = gold.meta(seeded_silver(rows), NOW)["drift"][PS5]           # pooled prior share is 21.7%
+    assert drift["metric"] == "low" and drift["delta_pp"] == pytest.approx(28.3, abs=0.1)

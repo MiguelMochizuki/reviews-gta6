@@ -78,10 +78,8 @@ function today(meta) {
 }
 
 function dayLabel(row, meta) {
-  const notes = [];
-  if (!row.complete) notes.push("partial coverage");
-  if (row.date === today(meta)) notes.push("day in progress");
-  return notes.length ? ` (${notes.join(", ")})` : "";
+  if (row.date === today(meta)) return " (day in progress)";
+  return row.complete ? "" : " (partial coverage)";
 }
 
 function renderDaily(rows, meta) {
@@ -136,7 +134,9 @@ function renderBands(rows, meta) {
         } },
         tooltip: { callbacks: {
           title: (items) => rows[items[0].dataIndex].date + dayLabel(rows[items[0].dataIndex], meta),
-          label: (item) => `${item.dataset.label}: ${item.parsed.y.toFixed(1)}%`,
+          label: (item) => (item.parsed.y == null
+            ? `${item.dataset.label}: not drawn (fewer than ${MIN_REVIEWS_FOR_SHARES} reviews)`
+            : `${item.dataset.label}: ${item.parsed.y.toFixed(1)}%`),
         } },
       },
     }),
@@ -178,7 +178,9 @@ function renderRepeat(rows, meta) {
       y: { ticks: { color: css("--text-2"), callback: (v) => `${v}%` } },
       plugins: { tooltip: { callbacks: {
         title: (items) => rows[items[0].dataIndex].date + dayLabel(rows[items[0].dataIndex], meta),
-        label: (item) => `Repeated: ${item.parsed.y.toFixed(2)}%`,
+        label: (item) => (item.parsed.y == null
+          ? `Not drawn (fewer than ${MIN_REVIEWS_FOR_SHARES} reviews)`
+          : `Repeated: ${item.parsed.y.toFixed(2)}%`),
       } } },
     }),
   }));
@@ -214,9 +216,10 @@ function renderNotes(platform, rows, meta) {
       "against the days before. Informational only.";
   }
   const cover = meta.coverage[platform];
-  const partial = rows.some((r) => !r.complete);
+  // Only days before `complete_from` are a coverage gap; today is simply unfinished.
+  const partial = cover.complete_from && rows.some((r) => r.date < cover.complete_from);
   const note = $("coverage");
-  note.hidden = !partial || !cover.complete_from;
+  note.hidden = !partial;
   if (!note.hidden) {
     note.textContent =
       `Days before ${cover.complete_from} may be partial for this platform: each query returns at most the ` +

@@ -6,7 +6,7 @@ requires-python = ">=3.12"
 dependencies = [
     "pandas", "numpy", "scipy", "matplotlib", "seaborn", "scikit-learn",
     "nltk", "gensim", "pyldavis", "lingua-language-detector", "tqdm",
-    "jupyterlab", "ipykernel",
+    "jupyterlab", "ipykernel", "kaggle",
 ]
 
 [tool.uv]

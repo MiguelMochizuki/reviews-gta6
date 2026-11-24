@@ -13,6 +13,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
-      - run: uv sync --group dev
+      - run: uv sync --no-default-groups --group dev
       - run: uv run ruff check .
       - run: uv run pytest -q

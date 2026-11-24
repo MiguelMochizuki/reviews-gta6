@@ -3,10 +3,10 @@ revision = 3
 requires-python = ">=3.12"
 resolution-markers = [
     "python_full_version >= '3.15' and sys_platform == 'win32'",
-    "python_full_version == '3.14.*' and sys_platform == 'win32'",
     "python_full_version >= '3.15' and sys_platform == 'emscripten'",
-    "python_full_version == '3.14.*' and sys_platform == 'emscripten'",
     "python_full_version >= '3.15' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.14.*' and sys_platform == 'win32'",
+    "python_full_version == '3.14.*' and sys_platform == 'emscripten'",
     "python_full_version == '3.14.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
     "python_full_version < '3.14' and sys_platform == 'win32'",
     "python_full_version < '3.14' and sys_platform == 'emscripten'",
@@ -2383,24 +2383,10 @@ wheels = [
 [[package]]
 name = "reviews-gta6"
 version = "0.1.0"
-source = { virtual = "." }
+source = { editable = "." }
 dependencies = [
     { name = "duckdb" },
-    { name = "gensim" },
     { name = "httpx" },
-    { name = "ipykernel" },
-    { name = "jupyterlab" },
-    { name = "kaggle" },
-    { name = "lingua-language-detector" },
-    { name = "matplotlib" },
-    { name = "nltk" },
-    { name = "numpy" },
-    { name = "pandas" },
-    { name = "pyldavis" },
-    { name = "scikit-learn" },
-    { name = "scipy" },
-    { name = "seaborn" },
-    { name = "tqdm" },
 ]
 
 [package.dev-dependencies]
@@ -2408,12 +2394,8 @@ dev = [
     { name = "pytest" },
     { name = "ruff" },
 ]
-
-[package.metadata]
-requires-dist = [
-    { name = "duckdb" },
+notebook = [
     { name = "gensim" },
-    { name = "httpx" },
     { name = "ipykernel" },
     { name = "jupyterlab" },
     { name = "kaggle" },
@@ -2429,10 +2411,32 @@ requires-dist = [
     { name = "tqdm" },
 ]
 
+[package.metadata]
+requires-dist = [
+    { name = "duckdb" },
+    { name = "httpx" },
+]
+
 [package.metadata.requires-dev]
 dev = [
     { name = "pytest" },
     { name = "ruff" },
+]
+notebook = [
+    { name = "gensim" },
+    { name = "ipykernel" },
+    { name = "jupyterlab" },
+    { name = "kaggle" },
+    { name = "lingua-language-detector" },
+    { name = "matplotlib" },
+    { name = "nltk" },
+    { name = "numpy" },
+    { name = "pandas" },
+    { name = "pyldavis" },
+    { name = "scikit-learn" },
+    { name = "scipy" },
+    { name = "seaborn" },
+    { name = "tqdm" },
 ]
 
 [[package]]

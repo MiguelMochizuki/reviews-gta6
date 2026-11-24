@@ -1,20 +1,27 @@
 [project]
 name = "reviews-gta6"
 version = "0.1.0"
-description = "EDA and topic modeling of GTA 6 user reviews"
+description = "Collection pipeline and analysis of GTA 6 user reviews"
 requires-python = ">=3.12"
-dependencies = [
-    "pandas", "numpy", "scipy", "matplotlib", "seaborn", "scikit-learn",
-    "nltk", "gensim", "pyldavis", "lingua-language-detector", "tqdm",
-    "jupyterlab", "ipykernel", "kaggle",
-    "httpx", "duckdb",
-]
+dependencies = ["httpx", "duckdb"]
 
 [dependency-groups]
 dev = ["pytest", "ruff"]
+notebook = [
+    "pandas", "numpy", "scipy", "matplotlib", "seaborn", "scikit-learn",
+    "nltk", "gensim", "pyldavis", "lingua-language-detector", "tqdm",
+    "jupyterlab", "ipykernel", "kaggle",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/reviews_pipeline"]
 
 [tool.uv]
-package = false
+default-groups = ["dev", "notebook"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

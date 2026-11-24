@@ -142,7 +142,7 @@ export STATE_REPO=owner/name AUTHOR_SALT=some-secret
 uv run python -m reviews_pipeline.run --mode head
 ```
 
-A head sweep walks the newest reviews of each platform and sentiment until it reaches a page it already stores. A deep sweep walks every page up to the 10,000 cap and catches edits to older reviews. Raw responses are written to bronze and stay in the private release. Author names are only hashed in silver.
+A head sweep walks the newest reviews of each platform and sentiment until it reaches a page it already stores. A deep sweep walks every page up to the 10,000 cap and catches edits to older reviews. Raw responses are written as one bronze file per run, uploaded to a monthly release (`bronze-YYYY-MM`) of the private repository to stay under the 1,000-assets-per-release limit. Author names are only hashed in silver.
 
 ### Run the notebook headless
 

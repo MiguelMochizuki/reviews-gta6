@@ -65,20 +65,21 @@ def test_silver_duplicate_ids_are_impossible_by_primary_key():
         con.execute("INSERT INTO reviews SELECT * FROM reviews")
 
 
-def test_bronze_round_trip(tmp_path):
-    items = [{**GOOD, "quote": "héllo 🎮"}, {**GOOD, "id": str(uuid.UUID(int=2))}]
+def test_bronze_round_trip_keeps_one_file_with_every_record(tmp_path):
+    first = {**GOOD, "quote": "héllo 🎮"}
+    second = {**GOOD, "id": str(uuid.UUID(int=2)), "quote": "cut \ud83d"}  # lone surrogate
     path = tmp_path / "bronze" / "run.parquet"
     quality.write_bronze(
-        items,
+        [("playstation-5", "negative", first), ("xbox-series-x", "positive", second)],
         fetched_at=datetime(2026, 11, 24, 10, 0),
-        platform="playstation-5",
-        sentiment="negative",
         sort="date",
         path=path,
     )
     rows = duckdb.connect().execute(
-        f"SELECT platform, sentiment, sort, raw_json FROM read_parquet('{path}')"
+        f"SELECT platform, sentiment, sort, raw_json FROM read_parquet('{path}') ORDER BY platform"
     ).fetchall()
-    assert len(rows) == 2
-    assert [json.loads(r[3]) for r in rows] == items
-    assert {r[:3] for r in rows} == {("playstation-5", "negative", "date")}
+    assert [r[:3] for r in rows] == [
+        ("playstation-5", "negative", "date"),
+        ("xbox-series-x", "positive", "date"),
+    ]
+    assert [json.loads(r[3]) for r in rows] == [first, second]

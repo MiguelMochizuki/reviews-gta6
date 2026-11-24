@@ -13,7 +13,8 @@ import duckdb
 from reviews_pipeline import silver
 from reviews_pipeline.config import PLATFORMS, SENTIMENTS
 from reviews_pipeline.http import CircuitOpen, PoliteClient
-from reviews_pipeline.quality import ContractError, check_silver
+from reviews_pipeline.quality import ContractError, check_silver, write_bronze
+from reviews_pipeline.sources.metacritic import ShortPage
 from reviews_pipeline.state import GhReleaseStore
 from reviews_pipeline.sweeps import EmptyRunError, RunStats, check_volume, sweep
 
@@ -53,15 +54,16 @@ def run(
     previous = silver.count(con)
     bronze_dir = workdir / "bronze"
     shutil.rmtree(bronze_dir, ignore_errors=True)
+    bronze: list[tuple[str, str, dict]] = []
 
     total, interrupted = RunStats(0, 0, 0, 0, 0), False
     for platform in PLATFORMS:
         for sentiment in SENTIMENTS:
             try:
                 stats = sweep(client, con, platform, sentiment, mode=mode, salt=salt,
-                              seen_at=now, bronze_dir=bronze_dir)
-            except CircuitOpen as error:
-                log.error("%s/%s: server kept failing (%s); stopping", platform, sentiment, error)
+                              seen_at=now, bronze=bronze)
+            except (CircuitOpen, ShortPage) as error:
+                log.error("%s/%s: %s; stopping", platform, sentiment, error)
                 interrupted = True
                 break
             except ContractError as error:
@@ -82,6 +84,9 @@ def run(
         except EmptyRunError as error:
             log.error("%s", error)
             return 1
+    if bronze:
+        name = f"{now:%Y%m%dT%H%M%S}-{mode}.parquet"
+        write_bronze(bronze, fetched_at=now, sort="date", path=bronze_dir / name)
     silver.save(con, workdir)
     store.push(workdir)
     log.info("done: %s, silver rows %d -> %d", total, previous, silver.count(con))

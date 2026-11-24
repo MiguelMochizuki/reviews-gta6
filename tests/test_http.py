@@ -70,3 +70,26 @@ def test_other_4xx_is_not_retried():
     with pytest.raises(httpx.HTTPStatusError):
         client.get_json(URL, {})
     assert len(calls) == 1
+
+
+def test_retries_transport_errors_then_succeeds():
+    outcomes = iter([httpx.ConnectTimeout("slow"), httpx.ReadError("reset"), None])
+
+    def handler(request):
+        outcome = next(outcomes)
+        if outcome:
+            raise outcome
+        return httpx.Response(200, json={"ok": True})
+
+    client, sleeps = make_client(handler, min_interval=0)
+    assert client.get_json(URL, {}) == {"ok": True}
+    assert sleeps == [2, 4]
+
+
+def test_transport_errors_exhaust_into_circuit_open():
+    def handler(request):
+        raise httpx.ConnectError("down")
+
+    client, _ = make_client(handler, min_interval=0, max_retries=2)
+    with pytest.raises(CircuitOpen):
+        client.get_json(URL, {})

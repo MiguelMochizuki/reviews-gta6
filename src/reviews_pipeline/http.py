@@ -8,7 +8,7 @@ from reviews_pipeline.config import MIN_INTERVAL_S, USER_AGENT
 
 
 class CircuitOpen(Exception):
-    """Raised when the server keeps answering 429/5xx after all retries."""
+    """Raised when the server keeps answering 429/5xx or the connection keeps failing."""
 
 
 class PoliteClient:
@@ -49,15 +49,22 @@ class PoliteClient:
             dict: Parsed JSON response.
 
         Raises:
-            CircuitOpen: If the server still answers 429/5xx after all retries.
+            CircuitOpen: If the server still answers 429/5xx, or the connection keeps
+                failing, after all retries.
             httpx.HTTPStatusError: For any other 4xx response (not retried).
         """
         for attempt in range(self._max_retries + 1):
             self._pace()
-            response = self._client.get(url, params=params)
-            if response.status_code == 429 or response.status_code >= 500:
+            try:
+                response = self._client.get(url, params=params)
+                failure = str(response.status_code) if (
+                    response.status_code == 429 or response.status_code >= 500
+                ) else None
+            except httpx.TransportError as error:
+                failure = type(error).__name__
+            if failure:
                 if attempt == self._max_retries:
-                    raise CircuitOpen(f"{response.status_code} after {attempt + 1} attempts")
+                    raise CircuitOpen(f"{failure} after {attempt + 1} attempts")
                 self._sleep(2 ** (attempt + 1))
                 continue
             response.raise_for_status()

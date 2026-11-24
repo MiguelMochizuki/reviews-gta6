@@ -78,3 +78,22 @@ def test_content_hash_changes_with_score_or_text_not_version():
     assert other_score["content_hash"] != base
     assert other_text["content_hash"] != base
     assert other_version["content_hash"] == base
+
+
+def test_normalize_survives_lone_surrogates_in_text_and_author():
+    item = make_item(1, quote="cut in half \ud83d", author="bad\udc00name")
+    row = metacritic.normalize(item, "playstation-5", "salt")
+    row["text"].encode("utf-8")  # must be encodable, DuckDB and Parquet need that
+    assert row["text"].startswith("cut in half")
+    assert row["author_hash"] is not None
+
+
+def test_iter_pages_flags_a_server_that_caps_the_page_size():
+    client = FakeClient(served=1000, cap=100)  # limit=200 requested, only 100 come back
+    with pytest.raises(metacritic.ShortPage):
+        pages(client)
+
+
+def test_iter_pages_short_page_that_reaches_the_total_is_fine():
+    client = FakeClient(served=L + 37)
+    assert [len(p) for p in pages(client)] == [L, 37]

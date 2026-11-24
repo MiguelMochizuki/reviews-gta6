@@ -38,7 +38,10 @@ def test_run_happy_path(tmp_path):
     assert go(FakeClient(served=5), store, tmp_path) == 0
     assert (store.pulls, store.pushes, store.pushed_count) == (1, 1, 5)
     assert (tmp_path / "reviews.parquet").exists()
-    assert list((tmp_path / "bronze").glob("*.parquet"))
+    files = list((tmp_path / "bronze").glob("*.parquet"))
+    assert [f.name for f in files] == ["20261124T120000-head.parquet"]  # one file per run
+    count = duckdb.connect().execute(f"SELECT count(*) FROM read_parquet('{files[0]}')")
+    assert count.fetchone()[0] == 5 * 6  # five items for each of 6 platform x sentiment queries
 
 
 def test_run_circuit_open_keeps_partial_and_fails(tmp_path):
@@ -46,6 +49,19 @@ def test_run_circuit_open_keeps_partial_and_fails(tmp_path):
     assert go(FakeClient(served=3 * L, fail_at_offset=L), store, tmp_path) == 1
     assert store.pushes == 1
     assert store.pushed_count == L
+
+
+def test_run_short_pages_keep_partial_and_fail(tmp_path):
+    store = FakeStore()
+    assert go(FakeClient(served=1000, cap=100), store, tmp_path) == 1
+    assert store.pushes == 1
+    assert store.pushed_count == 100
+
+
+def test_run_survives_network_error_keeping_partial(tmp_path):
+    store = FakeStore()
+    assert go(FakeClient(served=3 * L, fail_at_offset=L), store, tmp_path) == 1
+    assert (tmp_path / "bronze" / "20261124T120000-head.parquet").exists()
 
 
 def test_run_contract_failure_does_not_push(tmp_path):

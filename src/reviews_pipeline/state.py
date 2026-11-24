@@ -33,34 +33,58 @@ class GhReleaseStore:
         )
 
     def pull(self, dest: Path) -> None:
-        """Download the state files from the release. A missing release gives an empty directory.
+        """Download the state files, restoring any missing one from its `.prev` backup.
+
+        `gh release upload --clobber` deletes the old asset before uploading the new one, so
+        an interrupted push can leave a state file missing while its `.prev` copy survives.
 
         Args:
-            dest: Directory to download into, created if missing.
+            dest: Directory to download into, created if missing. Local copies of the
+                state files are removed first, so stale state is never loaded.
 
         Raises:
-            RuntimeError: If `gh` fails for any reason other than a missing release or asset.
+            RuntimeError: If `gh` fails for any reason other than a missing release or asset,
+                or if only part of the state exists and cannot be restored.
         """
         dest.mkdir(parents=True, exist_ok=True)
-        self._download(dest)
+        for name in STATE_FILES:
+            (dest / name).unlink(missing_ok=True)
+            (dest / f"{name}.prev").unlink(missing_ok=True)
+        self._download(dest, STATE_FILES + tuple(f"{n}.prev" for n in STATE_FILES))
+        present = [name for name in STATE_FILES if (dest / name).exists()]
+        backups = [name for name in STATE_FILES if (dest / f"{name}.prev").exists()]
+        if present or backups:
+            for name in STATE_FILES:
+                if not (dest / name).exists():
+                    if name not in backups:
+                        raise RuntimeError(f"state is incomplete: {name} is missing, no backup")
+                    (dest / f"{name}.prev").rename(dest / name)
+        for name in STATE_FILES:
+            (dest / f"{name}.prev").unlink(missing_ok=True)
 
-    def _upload(self, path: Path, clobber: bool) -> None:
+    def _upload(self, path: Path, clobber: bool, tag: str | None = None) -> None:
         extra = ["--clobber"] if clobber else []
-        self._gh("release", "upload", self.tag, str(path), "-R", self.repo, *extra)
+        self._gh("release", "upload", tag or self.tag, str(path), "-R", self.repo, *extra)
+
+    def _ensure_release(self, tag: str) -> None:
+        if not self._gh("release", "view", tag, "-R", self.repo, allow_missing=True):
+            self._gh("release", "create", tag, "-R", self.repo, "--title", tag,
+                     "--notes", "pipeline data")
 
     def push(self, src: Path) -> None:
         """Upload state files (keeping the previous copy as `.prev`) and new bronze files.
 
+        Bronze files go to one release per month (`bronze-YYYY-MM`, taken from the file
+        name), because a release holds at most 1,000 assets.
+
         Args:
             src: Directory with the state Parquet files at its root and bronze
-                files under `bronze/`.
+                files under `bronze/`, named `YYYYMMDDTHHMMSS-<mode>.parquet`.
 
         Raises:
             RuntimeError: If any `gh` command fails.
         """
-        if not self._gh("release", "view", self.tag, "-R", self.repo, allow_missing=True):
-            self._gh("release", "create", self.tag, "-R", self.repo,
-                     "--title", self.tag, "--notes", "pipeline state")
+        self._ensure_release(self.tag)
         for name in STATE_FILES:
             current = src / name
             if not current.exists():
@@ -72,4 +96,6 @@ class GhReleaseStore:
                     self._upload(previous, clobber=True)
             self._upload(current, clobber=True)
         for path in sorted((src / "bronze").glob("*.parquet")):
-            self._upload(path, clobber=False)
+            tag = f"bronze-{path.name[:4]}-{path.name[4:6]}"
+            self._ensure_release(tag)
+            self._upload(path, clobber=False, tag=tag)

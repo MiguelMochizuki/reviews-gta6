@@ -84,22 +84,18 @@ def check_silver(con: duckdb.DuckDBPyConnection) -> list[str]:
 
 
 def write_bronze(
-    items: list[dict],
+    records: list[tuple[str, str, dict]],
     *,
     fetched_at: datetime,
-    platform: str,
-    sentiment: str,
     sort: str,
     path: Path,
 ) -> None:
     """Write raw items, as returned, to one Parquet file. Private storage only.
 
     Args:
-        items: Raw items to store.
+        records: One `(platform, sentiment, raw_item)` tuple per fetched item.
         fetched_at: When the items were fetched.
-        platform: Platform of the query.
-        sentiment: Sentiment filter of the query.
-        sort: Sort order of the query.
+        sort: Sort order of the queries.
         path: Target Parquet file. Parent directories are created.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -108,11 +104,9 @@ def write_bronze(
         "CREATE TABLE bronze (fetched_at TIMESTAMP, platform VARCHAR, "
         "sentiment VARCHAR, sort VARCHAR, raw_json VARCHAR)"
     )
+    # ensure_ascii escapes lone surrogates, so any raw item survives the round trip
     con.executemany(
         "INSERT INTO bronze VALUES (?, ?, ?, ?, ?)",
-        [
-            (fetched_at, platform, sentiment, sort, json.dumps(item, ensure_ascii=False))
-            for item in items
-        ],
+        [(fetched_at, platform, sentiment, sort, json.dumps(item)) for platform, sentiment, item in records],
     )
     con.execute(f"COPY bronze TO '{path}' (FORMAT PARQUET)")

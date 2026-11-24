@@ -27,9 +27,10 @@ def seed(con, ids):
     silver.upsert(con, rows, datetime(2026, 11, 24, 9, 0))
 
 
-def run(client, con, tmp_path, mode="head"):
+def run(client, con, tmp_path, mode="head", bronze=None):
     return sweep(
-        client, con, PLATFORM, SENTIMENT, mode=mode, salt=SALT, seen_at=NOW, bronze_dir=tmp_path
+        client, con, PLATFORM, SENTIMENT, mode=mode, salt=SALT, seen_at=NOW,
+        bronze=[] if bronze is None else bronze,
     )
 
 
@@ -60,13 +61,12 @@ def test_duplicate_id_within_run_is_counted_once(tmp_path):
     assert stats.inserted == L + 5
 
 
-def test_sweep_writes_one_bronze_file_with_every_item(tmp_path):
+def test_sweep_collects_every_fetched_item_for_bronze(tmp_path):
     con = fresh()
-    stats = run(FakeClient(served=L + 10), con, tmp_path, "deep")
-    files = list(tmp_path.glob("*.parquet"))
-    assert len(files) == 1
-    count = duckdb.connect().execute(f"SELECT count(*) FROM read_parquet('{files[0]}')")
-    assert count.fetchone()[0] == stats.fetched == L + 10
+    bronze = []
+    stats = run(FakeClient(served=L + 10), con, tmp_path, "deep", bronze)
+    assert len(bronze) == stats.fetched == L + 10
+    assert bronze[0] == (PLATFORM, SENTIMENT, make_item(0))
 
 
 def test_sweep_raises_contract_error_on_invalid_page(tmp_path):
@@ -77,16 +77,14 @@ def test_sweep_raises_contract_error_on_invalid_page(tmp_path):
     assert silver.count(con) == 0
 
 
-def test_circuit_open_keeps_partial_silver_and_bronze(tmp_path):
+def test_circuit_open_keeps_partial_silver_and_collected_items(tmp_path):
     con = fresh()
+    bronze = []
     client = FakeClient(served=3 * L, fail_at_offset=L)
     with pytest.raises(CircuitOpen):
-        run(client, con, tmp_path, "deep")
+        run(client, con, tmp_path, "deep", bronze)
     assert silver.count(con) == L
-    files = list(tmp_path.glob("*.parquet"))
-    assert len(files) == 1
-    count = duckdb.connect().execute(f"SELECT count(*) FROM read_parquet('{files[0]}')")
-    assert count.fetchone()[0] == L
+    assert len(bronze) == L
 
 
 def test_check_volume_raises_on_empty_run_with_history():

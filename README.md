@@ -162,6 +162,10 @@ Platforms live in one registry, `PLATFORM_LABELS` in `src/reviews_pipeline/confi
 
 A head sweep walks the newest reviews of each platform and sentiment until it reaches a page it already stores. A deep sweep walks every page up to the 10,000 cap and catches edits to older reviews. After a successful collection the workflow builds the gold files and deploys `site/` to GitHub Pages. Only aggregates are published; silver and bronze never leave the private release. The page says the data is stale when the last successful run is more than 3 hours old.
 
+### Topics
+
+After each collection, `python -m reviews_pipeline.enrich` assigns an LDA topic to every English review with at least 10 tokens, using the same text rules as the notebook. New and edited reviews are enriched hourly with the current model; the daily deep run retrains the model on the last 14 days (repeated texts removed, at most 50,000 documents) and reclassifies the whole history. Each retrained topic takes the id of its closest topic in the previous model, so a topic keeps its meaning from day to day. The model and the per-review assignments live only in the private `state` release (`topic_model.zip`, `review_topics.parquet`); nothing from them is published yet. If enrichment fails the previous model keeps serving, the failure opens the usual issue, and the page is still rebuilt. Locally: `uv sync --group nlp`, then `STATE_REPO=owner/name uv run python -m reviews_pipeline.enrich --mode head`.
+
 Raw responses are written as one bronze file per run, uploaded to a monthly release (`bronze-YYYY-MM`) of the private repository to stay under the 1,000-assets-per-release limit. Author names are only hashed in silver.
 
 ### Run the notebook headless

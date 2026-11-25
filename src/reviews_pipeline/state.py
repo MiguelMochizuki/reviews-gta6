@@ -5,6 +5,9 @@ import tempfile
 from pathlib import Path
 
 STATE_FILES = ("reviews.parquet", "review_versions.parquet")
+# Written by the topic enrichment; absent before its first run, and never required.
+OPTIONAL_STATE_FILES = ("review_topics.parquet", "topic_model.zip")
+_ALL_FILES = STATE_FILES + OPTIONAL_STATE_FILES
 _MISSING = ("release not found", "no assets match", "no assets to download")
 
 
@@ -41,7 +44,7 @@ class GhReleaseStore:
         self._ensure_release(self.tag)
 
     def pull(self, dest: Path) -> None:
-        """Download the state files, restoring any missing one from its `.prev` backup.
+        """Download the state files (and the optional enrichment files), restoring any missing one from its `.prev` backup.
 
         `gh release upload --clobber` deletes the old asset before uploading the new one, so
         an interrupted push can leave a state file missing while its `.prev` copy survives.
@@ -55,10 +58,10 @@ class GhReleaseStore:
                 or if only part of the state exists and cannot be restored.
         """
         dest.mkdir(parents=True, exist_ok=True)
-        for name in STATE_FILES:
+        for name in _ALL_FILES:
             (dest / name).unlink(missing_ok=True)
             (dest / f"{name}.prev").unlink(missing_ok=True)
-        self._download(dest, STATE_FILES + tuple(f"{n}.prev" for n in STATE_FILES))
+        self._download(dest, _ALL_FILES + tuple(f"{n}.prev" for n in _ALL_FILES))
         present = [name for name in STATE_FILES if (dest / name).exists()]
         backups = [name for name in STATE_FILES if (dest / f"{name}.prev").exists()]
         if present or backups:
@@ -67,7 +70,10 @@ class GhReleaseStore:
                     if name not in backups:
                         raise RuntimeError(f"state is incomplete: {name} is missing, no backup")
                     (dest / f"{name}.prev").rename(dest / name)
-        for name in STATE_FILES:
+        for name in OPTIONAL_STATE_FILES:
+            if not (dest / name).exists() and (dest / f"{name}.prev").exists():
+                (dest / f"{name}.prev").rename(dest / name)
+        for name in _ALL_FILES:
             (dest / f"{name}.prev").unlink(missing_ok=True)
 
     def _upload(self, path: Path, clobber: bool, tag: str | None = None) -> None:
@@ -93,7 +99,7 @@ class GhReleaseStore:
             RuntimeError: If any `gh` command fails.
         """
         self._ensure_release(self.tag)
-        for name in STATE_FILES:
+        for name in _ALL_FILES:
             current = src / name
             if not current.exists():
                 continue

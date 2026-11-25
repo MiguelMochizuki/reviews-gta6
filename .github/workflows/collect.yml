@@ -28,21 +28,32 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
-      - run: uv sync --no-default-groups
+      - run: uv sync --no-default-groups --group nlp
       - name: Collect
         env:
           STATE_REPO: ${{ vars.STATE_REPO }}
           GH_TOKEN: ${{ secrets.STATE_TOKEN }}
           AUTHOR_SALT: ${{ secrets.AUTHOR_SALT }}
           MODE: ${{ github.event.inputs.mode || (github.event.schedule == '37 3 * * *' && 'deep' || 'head') }}
-        run: uv run --no-default-groups python -m reviews_pipeline.run --mode "$MODE"
+        run: uv run --no-sync python -m reviews_pipeline.run --mode "$MODE"
+      # Topics come after collection has been pushed. A failure here must not stop the page
+      # from being rebuilt with what exists, so it is reported by the last step instead.
+      - name: Enrich topics
+        id: enrich
+        continue-on-error: true
+        timeout-minutes: 60 # a timeout counts as a failure: gold still builds and an issue opens
+        env:
+          STATE_REPO: ${{ vars.STATE_REPO }}
+          GH_TOKEN: ${{ secrets.STATE_TOKEN }}
+          MODE: ${{ github.event.inputs.mode || (github.event.schedule == '37 3 * * *' && 'deep' || 'head') }}
+        run: uv run --no-sync python -m reviews_pipeline.enrich --mode "$MODE"
       - name: Build site data
-        run: uv run --no-default-groups python -m reviews_pipeline.gold --state data/state --out site/data
+        run: uv run --no-sync python -m reviews_pipeline.gold --state data/state --out site/data
       - uses: actions/upload-pages-artifact@v3
         with:
           path: site
       - name: Report failure
-        if: failure()
+        if: failure() || steps.enrich.outcome == 'failure'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

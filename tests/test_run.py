@@ -120,3 +120,20 @@ def test_run_fails_before_any_request_when_the_store_is_not_ready(tmp_path):
     store, client = FakeStore(prepare_error="Repository is empty."), FakeClient(served=5)
     assert go(client, store, tmp_path) == 1
     assert client.offsets == []
+
+
+def test_collection_never_pushes_the_topic_files(tmp_path):
+    class TopicStore(FakeStore):
+        def pull(self, dest):
+            super().pull(dest)
+            (dest / "topic_model.zip").write_bytes(b"model")
+            (dest / "review_topics.parquet").write_bytes(b"rows")
+
+        def push(self, src):
+            super().push(src)
+            self.pushed_files = {p.name for p in src.iterdir() if p.is_file()}
+
+    store = TopicStore()
+    assert go(FakeClient(served=5), store, tmp_path) == 0
+    assert "reviews.parquet" in store.pushed_files
+    assert not {"topic_model.zip", "review_topics.parquet"} & store.pushed_files
